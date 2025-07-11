@@ -1,0 +1,46 @@
+[
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "nobl9-wizard"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "prod"
+  },
+  {
+    "ParameterKey": "Owner",
+    "ParameterValue": "nobl9-team"
+  },
+  {
+    "ParameterKey": "Nobl9ClientId",
+    "ParameterValue": "your-nobl9-client-id-here"
+  },
+  {
+    "ParameterKey": "Nobl9ClientSecret",
+    "ParameterValue": "your-nobl9-client-secret-here"
+  },
+  {
+    "ParameterKey": "Nobl9SkipTlsVerify",
+    "ParameterValue": "false"
+  },
+  {
+    "ParameterKey": "LambdaTimeout",
+    "ParameterValue": "30"
+  },
+  {
+    "ParameterKey": "LambdaMemorySize",
+    "ParameterValue": "512"
+  },
+  {
+    "ParameterKey": "LogRetentionDays",
+    "ParameterValue": "30"
+  },
+  {
+    "ParameterKey": "EnableCloudWatchDashboard",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "EnableCloudWatchAlarms",
+    "ParameterValue": "true"
+  }
+] 

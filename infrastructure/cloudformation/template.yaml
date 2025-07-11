@@ -1,0 +1,629 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Nobl9 Wizard - Serverless Infrastructure for Nobl9 Onboarding Application'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: nobl9-wizard
+    Description: Name of the project (used for resource naming)
+  
+  Environment:
+    Type: String
+    Default: prod
+    Description: Environment name (e.g., dev, staging, prod)
+  
+  Owner:
+    Type: String
+    Default: nobl9-team
+    Description: Owner of the resources (for tagging)
+  
+  Nobl9ClientId:
+    Type: String
+    NoEcho: true
+    Description: Nobl9 API Client ID (will be stored in Parameter Store)
+  
+  Nobl9ClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Nobl9 API Client Secret (will be stored in Parameter Store)
+  
+  Nobl9SkipTlsVerify:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Skip TLS verification for Nobl9 API calls
+  
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+    MinValue: 3
+    MaxValue: 900
+    Description: Lambda function timeout in seconds
+  
+  LambdaMemorySize:
+    Type: Number
+    Default: 512
+    AllowedValues: [128, 256, 512, 1024, 2048, 4096]
+    Description: Lambda function memory size in MB
+  
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: CloudWatch log retention period in days
+  
+  EnableCloudWatchDashboard:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable CloudWatch dashboard for monitoring
+  
+  EnableCloudWatchAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable CloudWatch alarms for monitoring
+
+Conditions:
+  EnableDashboard: !Equals [!Ref EnableCloudWatchDashboard, 'true']
+  EnableAlarms: !Equals [!Ref EnableCloudWatchAlarms, 'true']
+
+Resources:
+  # S3 Bucket for Lambda function code
+  LambdaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-lambda-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # S3 Bucket for frontend hosting
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-frontend-${AWS::AccountId}-${AWS::Region}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ['*']
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # S3 Bucket Policy for frontend (public read access)
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket}/*'
+
+  # KMS Key for encrypting Nobl9 credentials
+  Nobl9CredentialsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for encrypting Nobl9 API credentials
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow Lambda to use the key
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:DescribeKey
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'kms:ViaService': !Sub 'ssm.${AWS::Region}.amazonaws.com'
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  Nobl9CredentialsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-credentials'
+      TargetKeyId: !Ref Nobl9CredentialsKey
+
+  # Parameter Store parameters for Nobl9 credentials
+  Nobl9ClientIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${ProjectName}/client-id'
+      Description: Nobl9 API Client ID
+      Type: SecureString
+      Value: !Ref Nobl9ClientId
+      KeyId: !Ref Nobl9CredentialsKey
+
+  Nobl9ClientSecretParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/${ProjectName}/client-secret'
+      Description: Nobl9 API Client Secret
+      Type: SecureString
+      Value: !Ref Nobl9ClientSecret
+      KeyId: !Ref Nobl9CredentialsKey
+
+  # IAM role for Lambda execution
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-lambda-execution-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Ref Nobl9ClientIdParameter
+                  - !Ref Nobl9ClientSecretParameter
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !Ref Nobl9CredentialsKey
+                Condition:
+                  StringEquals:
+                    'kms:ViaService': !Sub 'ssm.${AWS::Region}.amazonaws.com'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # CloudWatch Log Group for Lambda function
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-api'
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # Lambda function
+  Nobl9WizardFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-api'
+      Description: Nobl9 Wizard API Lambda function
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: bootstrap
+      Runtime: provided.al2
+      Code:
+        ZipFile: |
+          package main
+          
+          import (
+            "context"
+            "github.com/aws/aws-lambda-go/lambda"
+            "github.com/aws/aws-lambda-go/events"
+          )
+          
+          func handler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+            return events.APIGatewayProxyResponse{
+              StatusCode: 200,
+              Body: "{\"message\": \"Lambda function placeholder - replace with actual code\"}",
+              Headers: map[string]string{
+                "Content-Type": "application/json",
+              },
+            }, nil
+          }
+          
+          func main() {
+            lambda.Start(handler)
+          }
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Environment:
+        Variables:
+          NOBL9_CLIENT_ID_PARAM_NAME: !Ref Nobl9ClientIdParameter
+          NOBL9_CLIENT_SECRET_PARAM_NAME: !Ref Nobl9ClientSecretParameter
+          NOBL9_SKIP_TLS_VERIFY: !Ref Nobl9SkipTlsVerify
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # API Gateway REST API
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      Description: Nobl9 Wizard API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # API Gateway Resource for /api
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: api
+
+  # API Gateway Resource for /api/create-project
+  CreateProjectResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !Ref ApiResource
+      PathPart: create-project
+
+  # API Gateway Method for POST /api/create-project
+  CreateProjectPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref CreateProjectResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Nobl9WizardFunction.Arn}/invocations'
+
+  # API Gateway Method for OPTIONS /api/create-project (CORS)
+  CreateProjectOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref CreateProjectResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  # Lambda permission for API Gateway
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Nobl9WizardFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*'
+
+  # API Gateway Deployment
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - CreateProjectPostMethod
+      - CreateProjectOptionsMethod
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: !Ref Environment
+
+  # CloudWatch Dashboard
+  CloudWatchDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Condition: EnableDashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "${Nobl9WizardFunction}"],
+                  [".", "Errors", ".", "."],
+                  [".", "Duration", ".", "."]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Lambda Function Metrics"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/ApiGateway", "Count", "ApiName", "${ApiGatewayRestApi}"],
+                  [".", "5XXError", ".", "."],
+                  [".", "4XXError", ".", "."]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "API Gateway Metrics"
+              }
+            }
+          ]
+        }
+
+  # CloudWatch Alarms
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-lambda-errors'
+      AlarmDescription: This metric monitors Lambda function errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref Nobl9WizardFunction
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  ApiGateway5xxErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableAlarms
+    Properties:
+      AlarmName: !Sub '${ProjectName}-api-gateway-5xx-errors'
+      AlarmDescription: This metric monitors API Gateway 5XX errors
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Ref ApiGatewayRestApi
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+Outputs:
+  ApiGatewayUrl:
+    Description: URL of the API Gateway endpoint
+    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/api'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayUrl'
+
+  ApiGatewayCreateProjectUrl:
+    Description: URL of the create-project API endpoint
+    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/api/create-project'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayCreateProjectUrl'
+
+  FrontendWebsiteUrl:
+    Description: URL of the S3 website hosting the frontend
+    Value: !GetAtt FrontendBucket.WebsiteURL
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendWebsiteUrl'
+
+  FrontendWebsiteDomain:
+    Description: Domain name of the S3 website
+    Value: !GetAtt FrontendBucket.DomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendWebsiteDomain'
+
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref Nobl9WizardFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionName'
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt Nobl9WizardFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionArn'
+
+  LambdaInvokeArn:
+    Description: Invocation ARN of the Lambda function
+    Value: !GetAtt Nobl9WizardFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaInvokeArn'
+
+  LambdaExecutionRoleArn:
+    Description: ARN of the Lambda execution role
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaExecutionRoleArn'
+
+  FrontendBucketName:
+    Description: Name of the S3 bucket hosting the frontend
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendBucketName'
+
+  FrontendBucketArn:
+    Description: ARN of the S3 bucket hosting the frontend
+    Value: !GetAtt FrontendBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendBucketArn'
+
+  LambdaBucketName:
+    Description: Name of the S3 bucket storing Lambda function code
+    Value: !Ref LambdaBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaBucketName'
+
+  LambdaBucketArn:
+    Description: ARN of the S3 bucket storing Lambda function code
+    Value: !GetAtt LambdaBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaBucketArn'
+
+  KmsKeyArn:
+    Description: ARN of the KMS key used for encrypting credentials
+    Value: !GetAtt Nobl9CredentialsKey.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyArn'
+
+  KmsKeyId:
+    Description: ID of the KMS key used for encrypting credentials
+    Value: !Ref Nobl9CredentialsKey
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyId'
+
+  KmsKeyAlias:
+    Description: Alias of the KMS key used for encrypting credentials
+    Value: !Ref Nobl9CredentialsKeyAlias
+    Export:
+      Name: !Sub '${AWS::StackName}-KmsKeyAlias'
+
+  ParameterStoreClientIdName:
+    Description: Parameter Store name for Nobl9 Client ID
+    Value: !Ref Nobl9ClientIdParameter
+    Export:
+      Name: !Sub '${AWS::StackName}-ParameterStoreClientIdName'
+
+  ParameterStoreClientSecretName:
+    Description: Parameter Store name for Nobl9 Client Secret
+    Value: !Ref Nobl9ClientSecretParameter
+    Export:
+      Name: !Sub '${AWS::StackName}-ParameterStoreClientSecretName'
+
+  CloudWatchLogGroupName:
+    Description: Name of the CloudWatch log group for Lambda function
+    Value: !Ref LambdaLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudWatchLogGroupName'
+
+  CloudWatchDashboardName:
+    Description: Name of the CloudWatch dashboard
+    Value: !If [EnableDashboard, !Ref CloudWatchDashboard, !Ref 'AWS::NoValue']
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudWatchDashboardName'
+
+  ApiGatewayRestApiId:
+    Description: ID of the API Gateway REST API
+    Value: !Ref ApiGatewayRestApi
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayRestApiId'
+
+  ApiGatewayRestApiName:
+    Description: Name of the API Gateway REST API
+    Value: !GetAtt ApiGatewayRestApi.Name
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayRestApiName'
+
+  ApiGatewayStageName:
+    Description: Name of the API Gateway stage
+    Value: !Ref Environment
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayStageName'
+
+  DeploymentSummary:
+    Description: Summary of the deployed infrastructure
+    Value: !Sub |
+      {
+        "project_name": "${ProjectName}",
+        "environment": "${Environment}",
+        "aws_region": "${AWS::Region}",
+        "api_endpoint": "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/api",
+        "frontend_url": "${FrontendBucket.WebsiteURL}",
+        "lambda_function": "${Nobl9WizardFunction}",
+        "kms_key_alias": "${Nobl9CredentialsKeyAlias}",
+        "log_group": "${LambdaLogGroup}"
+      }
+    Export:
+      Name: !Sub '${AWS::StackName}-DeploymentSummary' 

@@ -1,0 +1,703 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>lambda: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">nobl9-wizard/lambda/main.go (49.5%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package main
+
+import (
+        "context"
+        "crypto/tls"
+        "encoding/json"
+        "fmt"
+        "log"
+        "net"
+        "net/http"
+        "os"
+        "regexp"
+        "strings"
+        "time"
+
+        "github.com/aws/aws-lambda-go/events"
+        "github.com/aws/aws-lambda-go/lambda"
+        "github.com/aws/aws-sdk-go-v2/aws"
+        "github.com/aws/aws-sdk-go-v2/config"
+        "github.com/aws/aws-sdk-go-v2/service/kms"
+        "github.com/aws/aws-sdk-go-v2/service/ssm"
+        "github.com/nobl9/nobl9-go/manifest"
+        v1alphaProject "github.com/nobl9/nobl9-go/manifest/v1alpha/project"
+        v1alphaRoleBinding "github.com/nobl9/nobl9-go/manifest/v1alpha/rolebinding"
+        "github.com/nobl9/nobl9-go/sdk"
+)
+
+// Valid roles that can be assigned
+var validRoles = map[string]bool{
+        "project-owner":  true,
+        "project-viewer": true,
+        "project-editor": true,
+}
+
+// UserGroup represents a group of users and their role
+type UserGroup struct {
+        UserIDs string `json:"userIds"` // Comma-separated list of user IDs or emails
+        Role    string `json:"role"`    // Role to assign (must be one of validRoles)
+}
+
+// CreateProjectRequest defines the request payload for creating a project
+type CreateProjectRequest struct {
+        AppID       string      `json:"appID"`       // Name of the project to create
+        Description string      `json:"description"` // Description of the project (optional)
+        UserGroups  []UserGroup `json:"userGroups"`  // List of user groups with their roles
+}
+
+// Response defines the API response structure sent back to the client
+type Response struct {
+        Success bool   `json:"success"` // Whether the operation was successful
+        Message string `json:"message"` // Human-readable message about the operation
+}
+
+// HealthResponse defines the health check response structure
+type HealthResponse struct {
+        Status      string `json:"status"`
+        Timestamp   string `json:"timestamp"`
+        Version     string `json:"version"`
+        Environment string `json:"environment"`
+}
+
+// Nobl9Credentials holds the decrypted credentials
+type Nobl9Credentials struct {
+        ClientID     string
+        ClientSecret string
+}
+
+// Global variables for AWS services
+var (
+        kmsClient  *kms.Client
+        ssmClient  *ssm.Client
+        appVersion = "1.0.0"
+)
+
+// ptr creates a pointer to a string - helper function needed for role binding specs
+func ptr(s string) *string <span class="cov8" title="1">{
+        return &amp;s
+}</span>
+
+// sanitizeName ensures the string is RFC-1123 compliant by converting to lowercase,
+// replacing non-alphanumeric (except hyphen) characters with hyphens,
+// and trimming leading/trailing hyphens.
+func sanitizeName(name string) string <span class="cov8" title="1">{
+        // Convert to lowercase
+        name = strings.ToLower(name)
+        // Replace non-alphanumeric characters (except hyphen) with a hyphen
+        reg := regexp.MustCompile("[^a-z0-9-]+")
+        name = reg.ReplaceAllString(name, "-")
+        // Trim hyphens from the start and end
+        name = strings.Trim(name, "-")
+        return name
+}</span>
+
+// truncate shortens a string to a max length, preserving uniqueness where possible.
+func truncate(s string, maxLen int) string <span class="cov8" title="1">{
+        if len(s) &gt; maxLen </span><span class="cov8" title="1">{
+                return s[:maxLen]
+        }</span>
+        <span class="cov8" title="1">return s</span>
+}
+
+// looksLikeEmail determines if a string appears to be intended as an email address
+// even if it's malformed (e.g., missing @ symbol)
+func looksLikeEmail(s string) bool <span class="cov8" title="1">{
+        // If it contains @, it's definitely intended to be an email
+        if strings.Contains(s, "@") </span><span class="cov8" title="1">{
+                return true
+        }</span>
+
+        // Check for common email domain patterns
+        <span class="cov8" title="1">commonDomains := []string{".com", ".org", ".net", ".edu", ".gov", ".co.", ".io", ".dev"}
+        for _, domain := range commonDomains </span><span class="cov8" title="1">{
+                if strings.Contains(s, domain) </span><span class="cov8" title="1">{
+                        return true
+                }</span>
+        }
+
+        <span class="cov8" title="1">return false</span>
+}
+
+// validateEmail performs basic email validation
+func validateEmail(email string) bool <span class="cov8" title="1">{
+        emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+        return emailRegex.MatchString(email)
+}</span>
+
+// validateProjectName validates the project name format
+func validateProjectName(name string) error <span class="cov8" title="1">{
+        if name == "" </span><span class="cov8" title="1">{
+                return fmt.Errorf("project name cannot be empty")
+        }</span>
+
+        <span class="cov8" title="1">if len(name) &lt; 3 </span><span class="cov8" title="1">{
+                return fmt.Errorf("project name must be at least 3 characters long")
+        }</span>
+
+        <span class="cov8" title="1">if len(name) &gt; 63 </span><span class="cov8" title="1">{
+                return fmt.Errorf("project name must be less than 63 characters")
+        }</span>
+
+        // Check for valid characters (lowercase letters, numbers, hyphens)
+        <span class="cov8" title="1">validNameRegex := regexp.MustCompile(`^[a-z0-9-]+$`)
+        if !validNameRegex.MatchString(name) </span><span class="cov8" title="1">{
+                return fmt.Errorf("project name can only contain lowercase letters, numbers, and hyphens")
+        }</span>
+
+        // Check that it doesn't start or end with hyphen
+        <span class="cov8" title="1">if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") </span><span class="cov8" title="1">{
+                return fmt.Errorf("project name cannot start or end with a hyphen")
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// getValidRoles returns a formatted string of valid roles for error messages
+func getValidRoles() string <span class="cov8" title="1">{
+        roles := make([]string, 0, len(validRoles))
+        for role := range validRoles </span><span class="cov8" title="1">{
+                roles = append(roles, role)
+        }</span>
+        <span class="cov8" title="1">return strings.Join(roles, ", ")</span>
+}
+
+// configureTLS sets up custom HTTP transport with TLS verification disabled if needed
+func configureTLS() <span class="cov8" title="1">{
+        if os.Getenv("NOBL9_SKIP_TLS_VERIFY") == "true" </span><span class="cov0" title="0">{
+                log.Println("WARNING: SSL certificate verification is DISABLED (NOBL9_SKIP_TLS_VERIFY=true)")
+
+                // Create a custom transport with TLS verification disabled
+                customTransport := &amp;http.Transport{
+                        TLSClientConfig: &amp;tls.Config{InsecureSkipVerify: true},
+                        // Copy other important settings from the default transport
+                        Proxy:                 http.ProxyFromEnvironment,
+                        DialContext:           (&amp;net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+                        ForceAttemptHTTP2:     true,
+                        MaxIdleConns:          100,
+                        IdleConnTimeout:       90 * time.Second,
+                        TLSHandshakeTimeout:   10 * time.Second,
+                        ExpectContinueTimeout: 1 * time.Second,
+                }
+
+                // Set this as the default transport for all HTTP clients
+                http.DefaultTransport = customTransport
+        }</span> else<span class="cov8" title="1"> {
+                log.Println("TLS verification is enabled")
+        }</span>
+}
+
+// getNobl9Credentials retrieves and decrypts Nobl9 credentials from AWS Parameter Store and KMS
+func getNobl9Credentials(ctx context.Context) (*Nobl9Credentials, error) <span class="cov8" title="1">{
+        // Get parameter names from environment variables
+        clientIDParamName := os.Getenv("NOBL9_CLIENT_ID_PARAM_NAME")
+        clientSecretParamName := os.Getenv("NOBL9_CLIENT_SECRET_PARAM_NAME")
+
+        if clientIDParamName == "" || clientSecretParamName == "" </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("missing parameter names: NOBL9_CLIENT_ID_PARAM_NAME and NOBL9_CLIENT_SECRET_PARAM_NAME must be set")
+        }</span>
+
+        <span class="cov0" title="0">log.Printf("Retrieving credentials from Parameter Store: %s, %s", clientIDParamName, clientSecretParamName)
+
+        // Get encrypted credentials from Parameter Store
+        clientIDParam, err := ssmClient.GetParameter(ctx, &amp;ssm.GetParameterInput{
+                Name:           aws.String(clientIDParamName),
+                WithDecryption: aws.Bool(true),
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to get client ID parameter: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">clientSecretParam, err := ssmClient.GetParameter(ctx, &amp;ssm.GetParameterInput{
+                Name:           aws.String(clientSecretParamName),
+                WithDecryption: aws.Bool(true),
+        })
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to get client secret parameter: %w", err)
+        }</span>
+
+        // If parameters are encrypted with KMS, decrypt them
+        <span class="cov0" title="0">clientID := *clientIDParam.Parameter.Value
+        clientSecret := *clientSecretParam.Parameter.Value
+
+        // Check if the values are KMS-encrypted (they start with "AQICAH")
+        if strings.HasPrefix(clientID, "AQICAH") </span><span class="cov0" title="0">{
+                log.Println("Decrypting client ID with KMS")
+                clientIDBytes, err := kmsClient.Decrypt(ctx, &amp;kms.DecryptInput{
+                        CiphertextBlob: []byte(clientID),
+                })
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to decrypt client ID: %w", err)
+                }</span>
+                <span class="cov0" title="0">clientID = string(clientIDBytes.Plaintext)</span>
+        }
+
+        <span class="cov0" title="0">if strings.HasPrefix(clientSecret, "AQICAH") </span><span class="cov0" title="0">{
+                log.Println("Decrypting client secret with KMS")
+                clientSecretBytes, err := kmsClient.Decrypt(ctx, &amp;kms.DecryptInput{
+                        CiphertextBlob: []byte(clientSecret),
+                })
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to decrypt client secret: %w", err)
+                }</span>
+                <span class="cov0" title="0">clientSecret = string(clientSecretBytes.Plaintext)</span>
+        }
+
+        <span class="cov0" title="0">log.Println("Successfully retrieved Nobl9 credentials")
+        return &amp;Nobl9Credentials{
+                ClientID:     clientID,
+                ClientSecret: clientSecret,
+        }, nil</span>
+}
+
+// handleHealthCheck handles health check requests
+func handleHealthCheck(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) <span class="cov8" title="1">{
+        // Only allow GET requests
+        if request.HTTPMethod != "GET" </span><span class="cov8" title="1">{
+                return respondLambdaWithStatus(http.StatusMethodNotAllowed, false, "Method not allowed")
+        }</span>
+
+        <span class="cov8" title="1">healthResponse := HealthResponse{
+                Status:      "healthy",
+                Timestamp:   time.Now().UTC().Format(time.RFC3339),
+                Version:     appVersion,
+                Environment: os.Getenv("ENVIRONMENT"),
+        }
+
+        responseBody, err := json.Marshal(healthResponse)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("Error marshaling health response: %v", err)
+                return respondLambdaWithStatus(http.StatusInternalServerError, false, "Internal server error")
+        }</span>
+
+        <span class="cov8" title="1">return events.APIGatewayProxyResponse{
+                StatusCode: http.StatusOK,
+                Body:       string(responseBody),
+                Headers: map[string]string{
+                        "Content-Type":                 "application/json",
+                        "Access-Control-Allow-Origin":  "*",
+                        "Access-Control-Allow-Methods": "GET, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                },
+        }, nil</span>
+}
+
+// handleCreateProject processes Lambda requests to create a new project and assign user roles
+func handleCreateProject(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) <span class="cov8" title="1">{
+        // Only allow POST requests
+        if request.HTTPMethod != "POST" </span><span class="cov8" title="1">{
+                return respondLambdaWithStatus(http.StatusMethodNotAllowed, false, "Method not allowed")
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Processing create project request: %s", request.Body)
+
+        // Parse the JSON request body into our struct
+        var req CreateProjectRequest
+        if err := json.Unmarshal([]byte(request.Body), &amp;req); err != nil </span><span class="cov8" title="1">{
+                log.Printf("Error parsing request body: %v", err)
+                return respondLambdaWithStatus(http.StatusBadRequest, false, "Invalid request body: "+err.Error())
+        }</span>
+
+        // Validate the project name
+        <span class="cov8" title="1">if err := validateProjectName(req.AppID); err != nil </span><span class="cov8" title="1">{
+                log.Printf("Invalid project name '%s': %v", req.AppID, err)
+                return respondLambdaWithStatus(http.StatusBadRequest, false, err.Error())
+        }</span>
+
+        <span class="cov8" title="1">if len(req.UserGroups) == 0 </span><span class="cov8" title="1">{
+                log.Printf("No user groups provided for project '%s'", req.AppID)
+                return respondLambdaWithStatus(http.StatusBadRequest, false, "At least one user group is required")
+        }</span>
+
+        // Validate all roles and user identifiers in the request
+        <span class="cov8" title="1">for groupIndex, group := range req.UserGroups </span><span class="cov8" title="1">{
+                if !validRoles[group.Role] </span><span class="cov8" title="1">{
+                        log.Printf("Invalid role '%s' in group %d", group.Role, groupIndex)
+                        return respondLambdaWithStatus(http.StatusBadRequest, false, fmt.Sprintf("Invalid role '%s' in group %d. Must be one of: %s", group.Role, groupIndex, getValidRoles()))
+                }</span>
+
+                // Validate all user identifiers in this group
+                <span class="cov8" title="1">userIdentifiers := strings.Split(group.UserIDs, ",")
+                for _, userIdentifier := range userIdentifiers </span><span class="cov8" title="1">{
+                        userIdentifier = strings.TrimSpace(userIdentifier)
+                        if userIdentifier == "" </span><span class="cov0" title="0">{
+                                continue</span> // Skip empty entries
+                        }
+
+                        // Check if this looks like it's intended to be an email
+                        <span class="cov8" title="1">if looksLikeEmail(userIdentifier) </span><span class="cov8" title="1">{
+                                // This looks like it's intended to be an email, so validate it strictly
+                                if !validateEmail(userIdentifier) </span><span class="cov8" title="1">{
+                                        log.Printf("Invalid email format: '%s' in group %d", userIdentifier, groupIndex)
+                                        return respondLambdaWithStatus(http.StatusBadRequest, false, fmt.Sprintf("Invalid email format: '%s' in group %d. Email addresses must contain @ symbol and be properly formatted (e.g., user@domain.com).", userIdentifier, groupIndex))
+                                }</span>
+                        } else<span class="cov0" title="0"> {
+                                // This should be a user ID - validate it's reasonable
+                                if len(userIdentifier) &lt; 2 </span><span class="cov0" title="0">{
+                                        log.Printf("Invalid user ID: '%s' in group %d (too short)", userIdentifier, groupIndex)
+                                        return respondLambdaWithStatus(http.StatusBadRequest, false, fmt.Sprintf("Invalid user ID: '%s' in group %d (too short)", userIdentifier, groupIndex))
+                                }</span>
+                        }
+                }
+        }
+
+        <span class="cov8" title="1">log.Printf("Request validation passed for project '%s'", req.AppID)
+
+        // Get Nobl9 credentials from AWS Parameter Store and KMS
+        credentials, err := getNobl9Credentials(ctx)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("Failed to retrieve Nobl9 credentials: %v", err)
+                return respondLambdaWithStatus(http.StatusInternalServerError, false, "Failed to retrieve Nobl9 credentials: "+err.Error())
+        }</span>
+
+        // Set environment variables for the Nobl9 SDK
+        <span class="cov0" title="0">os.Setenv("NOBL9_SDK_CLIENT_ID", credentials.ClientID)
+        os.Setenv("NOBL9_SDK_CLIENT_SECRET", credentials.ClientSecret)
+
+        // Create a context with timeout for all SDK operations
+        sdkCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+        defer cancel()
+
+        // Initialize the Nobl9 client using the same method as your CLI tool
+        client, err := sdk.DefaultClient()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("Failed to initialize Nobl9 SDK client: %v", err)
+                return respondLambdaWithStatus(http.StatusInternalServerError, false, "Failed to initialize Nobl9 SDK client: "+err.Error())
+        }</span>
+
+        // Step 1: Check if project already exists
+        // We'll try to get the project by creating a project object and checking if it exists
+        // Note: The Nobl9 SDK doesn't have a direct "project exists" check, so we'll try to create
+        // and handle the error if it already exists
+
+        // Step 2: Create the project
+        // Create a new project manifest object with description from the request
+        // If no description is provided, use a default one
+        <span class="cov0" title="0">description := req.Description
+        if description == "" </span><span class="cov0" title="0">{
+                description = fmt.Sprintf("Project created via API: %s", req.AppID)
+        }</span>
+
+        <span class="cov0" title="0">project := v1alphaProject.New(
+                v1alphaProject.Metadata{
+                        Name: req.AppID,
+                },
+                v1alphaProject.Spec{
+                        Description: description,
+                },
+        )
+
+        log.Printf("Creating project '%s' with description: %s", req.AppID, description)
+
+        // Step 3: Prepare role bindings for each user group
+        var roleBindings []manifest.Object
+        var errors []string
+
+        // Process each user group
+        for groupIndex, group := range req.UserGroups </span><span class="cov0" title="0">{
+                // Split the comma-separated user IDs/emails
+                userIdentifiers := strings.Split(group.UserIDs, ",")
+
+                // Process each user in the group
+                for _, userIdentifier := range userIdentifiers </span><span class="cov0" title="0">{
+                        userIdentifier = strings.TrimSpace(userIdentifier)
+                        if userIdentifier == "" </span><span class="cov0" title="0">{
+                                continue</span> // Skip empty entries
+                        }
+
+                        // We already validated the format above, so now we just need to process
+                        <span class="cov0" title="0">var userID string
+                        if strings.Contains(userIdentifier, "@") </span><span class="cov0" title="0">{
+                                // This is an email, try to get the user by email
+                                log.Printf("Looking up user by email: %s", userIdentifier)
+                                user, err := client.Users().V2().GetUser(sdkCtx, userIdentifier)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        errorMsg := fmt.Sprintf("Error retrieving user '%s': %v", userIdentifier, err)
+                                        log.Print(errorMsg)
+                                        errors = append(errors, errorMsg)
+                                        continue</span>
+                                }
+                                <span class="cov0" title="0">if user == nil </span><span class="cov0" title="0">{
+                                        errorMsg := fmt.Sprintf("User with email '%s' not found in Nobl9", userIdentifier)
+                                        log.Print(errorMsg)
+                                        errors = append(errors, errorMsg)
+                                        continue</span>
+                                }
+                                <span class="cov0" title="0">userID = user.UserID
+                                log.Printf("Found user: %s -&gt; %s", userIdentifier, userID)</span>
+                        } else<span class="cov0" title="0"> {
+                                // This is a user ID
+                                userID = userIdentifier
+                                log.Printf("Using provided user ID: %s", userID)
+                        }</span>
+
+                        // Generate a unique name for the role binding
+                        // Use the same naming convention as your CLI tool
+                        <span class="cov0" title="0">sanitizedProject := sanitizeName(req.AppID)
+                        sanitizedUser := sanitizeName(userIdentifier)
+                        // Truncate components to ensure the final name is within the 63-char limit required by Nobl9.
+                        // The name has a fixed overhead: "assign--gX-" + a 10-digit timestamp = ~22 chars.
+                        // This leaves ~41 chars for the project and user. We'll allocate 20 to each.
+                        truncatedProject := truncate(sanitizedProject, 20)
+                        truncatedUser := truncate(sanitizedUser, 20)
+
+                        roleBindingName := fmt.Sprintf("assign-%s-%s-g%d-%d",
+                                truncatedProject,
+                                truncatedUser,
+                                groupIndex,
+                                time.Now().Unix())
+
+                        // Create the role binding object
+                        roleBinding := v1alphaRoleBinding.New(
+                                v1alphaRoleBinding.Metadata{
+                                        Name: roleBindingName,
+                                },
+                                v1alphaRoleBinding.Spec{
+                                        User:       ptr(userID), // Use the user's ID
+                                        RoleRef:    group.Role,  // Role from the request
+                                        ProjectRef: req.AppID,   // Project we just created
+                                },
+                        )
+
+                        roleBindings = append(roleBindings, roleBinding)
+                        log.Printf("Created role binding manifest: %s for user %s with role %s", roleBindingName, userID, group.Role)</span>
+                }
+        }
+
+        // If we had errors finding users, we can't proceed.
+        // The project has not been created yet, so we just report the errors.
+        <span class="cov0" title="0">if len(errors) &gt; 0 </span><span class="cov0" title="0">{
+                errorMsg := fmt.Sprintf("Failed to create project '%s' because some users could not be found:\n• %s",
+                        req.AppID, strings.Join(errors, "\n• "))
+                log.Print(errorMsg)
+                return respondLambdaWithStatus(http.StatusBadRequest, false, errorMsg)
+        }</span>
+
+        // Step 4: Apply the project and all role bindings in a single atomic operation
+        <span class="cov0" title="0">allObjects := []manifest.Object{project}
+        if len(roleBindings) &gt; 0 </span><span class="cov0" title="0">{
+                allObjects = append(allObjects, roleBindings...)
+        }</span>
+
+        <span class="cov0" title="0">log.Printf("Applying %d objects to Nobl9 (1 project + %d role bindings)", len(allObjects), len(roleBindings))
+
+        if err := client.Objects().V1().Apply(sdkCtx, allObjects); err != nil </span><span class="cov0" title="0">{
+                // Check if the error is because the project already exists
+                if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "conflict") </span><span class="cov0" title="0">{
+                        log.Printf("Project '%s' already exists", req.AppID)
+                        return respondLambdaWithStatus(http.StatusConflict, false, fmt.Sprintf("Project '%s' already exists", req.AppID))
+                }</span>
+
+                <span class="cov0" title="0">log.Printf("Failed to create project and assign roles: %v", err)
+                return respondLambdaWithStatus(http.StatusInternalServerError, false, fmt.Sprintf("Failed to create project and assign roles: %v", err))</span>
+        }
+
+        <span class="cov0" title="0">log.Printf("Successfully created project '%s' and applied %d role bindings", req.AppID, len(roleBindings))
+
+        // Success! Report back to the client
+        message := fmt.Sprintf("Project '%s' created successfully with %d user role assignments", req.AppID, len(roleBindings))
+        return respondLambda(true, message)</span>
+}
+
+// respondLambda sends a JSON response for Lambda with 200 status code
+func respondLambda(success bool, message string) (events.APIGatewayProxyResponse, error) <span class="cov8" title="1">{
+        return respondLambdaWithStatus(http.StatusOK, success, message)
+}</span>
+
+// respondLambdaWithStatus sends a JSON response for Lambda with custom status code
+func respondLambdaWithStatus(statusCode int, success bool, message string) (events.APIGatewayProxyResponse, error) <span class="cov8" title="1">{
+        // Create the response object
+        response := Response{
+                Success: success,
+                Message: message,
+        }
+
+        // Encode the JSON response
+        responseBody, err := json.Marshal(response)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("Error marshaling JSON response: %v", err)
+                return events.APIGatewayProxyResponse{
+                        StatusCode: http.StatusInternalServerError,
+                        Body:       "Internal server error",
+                        Headers: map[string]string{
+                                "Content-Type": "application/json",
+                        },
+                }, nil
+        }</span>
+
+        // Log the response for debugging
+        <span class="cov8" title="1">if success </span><span class="cov8" title="1">{
+                log.Printf("SUCCESS: %s", message)
+        }</span> else<span class="cov8" title="1"> {
+                log.Printf("ERROR: %s", message)
+        }</span>
+
+        // Return the Lambda response
+        <span class="cov8" title="1">return events.APIGatewayProxyResponse{
+                StatusCode: statusCode,
+                Body:       string(responseBody),
+                Headers: map[string]string{
+                        "Content-Type":                 "application/json",
+                        "Access-Control-Allow-Origin":  "*",
+                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type",
+                },
+        }, nil</span>
+}
+
+// handleRequest is the main Lambda handler that routes requests to appropriate handlers
+func handleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) <span class="cov8" title="1">{
+        // Configure TLS before processing any requests
+        configureTLS()
+
+        // Log incoming request
+        log.Printf("Received %s request to %s", request.HTTPMethod, request.Path)
+
+        // Handle CORS preflight requests
+        if request.HTTPMethod == "OPTIONS" </span><span class="cov8" title="1">{
+                return events.APIGatewayProxyResponse{
+                        StatusCode: http.StatusOK,
+                        Headers: map[string]string{
+                                "Access-Control-Allow-Origin":  "*",
+                                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                                "Access-Control-Allow-Headers": "Content-Type",
+                        },
+                }, nil
+        }</span>
+
+        // Route requests based on the path
+        <span class="cov8" title="1">switch request.Path </span>{
+        case "/health":<span class="cov8" title="1">
+                return handleHealthCheck(ctx, request)</span>
+        case "/api/create-project":<span class="cov8" title="1">
+                return handleCreateProject(ctx, request)</span>
+        default:<span class="cov8" title="1">
+                log.Printf("404 Not Found: %s", request.Path)
+                return respondLambdaWithStatus(http.StatusNotFound, false, "Not found")</span>
+        }
+}
+
+// init initializes AWS clients and other global resources
+func init() <span class="cov8" title="1">{
+        log.Println("Initializing Nobl9 Wizard Lambda function...")
+
+        // Load AWS configuration
+        cfg, err := config.LoadDefaultConfig(context.Background())
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("Failed to load AWS config: %v", err)
+        }</span>
+
+        // Initialize AWS service clients
+        <span class="cov8" title="1">kmsClient = kms.NewFromConfig(cfg)
+        ssmClient = ssm.NewFromConfig(cfg)
+
+        log.Println("AWS clients initialized successfully")</span>
+}
+
+// main function starts the Lambda handler
+func main() <span class="cov0" title="0">{
+        log.Println("Starting Nobl9 Wizard Lambda function...")
+        lambda.Start(handleRequest)
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

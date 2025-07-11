@@ -1,0 +1,52 @@
+# Nobl9 Wizard - Terraform Variables Example
+# Copy this file to terraform.tfvars and update the values as needed
+
+# AWS Configuration
+aws_region = "us-east-1"
+
+# Project Configuration
+project_name = "nobl9-wizard"
+environment  = "prod"
+owner        = "nobl9-team"
+
+# Nobl9 API Credentials (REQUIRED - these will be stored securely in Parameter Store)
+nobl9_client_id     = "your-nobl9-client-id-here"
+nobl9_client_secret = "your-nobl9-client-secret-here"
+
+# Nobl9 API Configuration
+nobl9_skip_tls_verify = "false"
+
+# Lambda Function Configuration
+lambda_timeout     = 30
+lambda_memory_size = 512
+
+# Logging Configuration
+log_retention_days = 30
+
+# Monitoring Configuration
+enable_cloudwatch_dashboard = true
+enable_cloudwatch_alarms   = true
+
+# Optional: CloudWatch Alarm Actions (SNS topic ARNs)
+# alarm_actions = ["arn:aws:sns:us-east-1:123456789012:alerts-topic"]
+
+# Optional: API Gateway Configuration
+enable_api_gateway_logging = false
+api_gateway_log_level      = "INFO"
+
+# Optional: X-Ray Tracing
+enable_xray_tracing = false
+
+# Optional: Lambda Concurrency
+lambda_reserved_concurrency = 0
+
+# Optional: S3 Bucket Versioning
+frontend_bucket_versioning = false
+lambda_bucket_versioning   = true
+
+# Optional: Additional Tags
+tags = {
+  CostCenter = "engineering"
+  Team       = "platform"
+  Purpose    = "nobl9-onboarding"
+} 

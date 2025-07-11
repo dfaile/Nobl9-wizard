@@ -1,0 +1,222 @@
+/* Nobl9 Wizard - Main App Styles */
+
+.App {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Header Styles */
+.App-header {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 1rem 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  text-align: center;
+}
+
+.App-header h1 {
+  margin: 0;
+  color: #2c3e50;
+  font-size: 2.5rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subtitle {
+  margin: 0.5rem 0 0 0;
+  color: #7f8c8d;
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+
+.debug-info {
+  margin-top: 0.5rem;
+  color: #95a5a6;
+  font-size: 0.8rem;
+}
+
+/* Main Content */
+.App-main {
+  flex: 1;
+  padding: 2rem 0;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+.welcome-section {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.welcome-section h2 {
+  color: #2c3e50;
+  margin: 0 0 1rem 0;
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+.welcome-section p {
+  color: #5a6c7d;
+  margin: 0 0 1.5rem 0;
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+.help-link {
+  margin-top: 1rem;
+}
+
+.help-link a {
+  color: #667eea;
+  text-decoration: none;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  border: 2px solid #667eea;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  display: inline-block;
+}
+
+.help-link a:hover {
+  background: #667eea;
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+/* Footer Styles */
+.App-footer {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 1.5rem 0;
+  margin-top: auto;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.footer-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  text-align: center;
+}
+
+.App-footer p {
+  margin: 0;
+  color: #7f8c8d;
+  font-size: 0.9rem;
+}
+
+.debug-footer {
+  margin-top: 0.5rem !important;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem !important;
+  color: #95a5a6 !important;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .header-content,
+  .container,
+  .footer-content {
+    padding: 0 1rem;
+  }
+  
+  .App-header h1 {
+    font-size: 2rem;
+  }
+  
+  .welcome-section {
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  .welcome-section h2 {
+    font-size: 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .App-header h1 {
+    font-size: 1.8rem;
+  }
+  
+  .subtitle {
+    font-size: 1rem;
+  }
+  
+  .welcome-section {
+    padding: 1rem;
+  }
+  
+  .welcome-section h2 {
+    font-size: 1.3rem;
+  }
+  
+  .welcome-section p {
+    font-size: 0.9rem;
+  }
+}
+
+/* Loading States */
+.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Animation Classes */
+.fade-in {
+  animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+} 
