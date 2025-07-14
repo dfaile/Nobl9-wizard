@@ -67,22 +67,23 @@ servers:
 
 ## Authentication
 
-The API is currently configured for **public access with no authentication**. This allows the web frontend to communicate with the API without requiring authentication headers.
+The API uses **AWS IAM authentication** to restrict access to authorized frontend applications only. All API requests must be signed using AWS Signature Version 4 (SigV4) with valid AWS credentials.
 
-**Security Note**: In production environments, consider implementing additional security measures such as:
-- API keys for rate limiting and usage tracking
-- AWS IAM authentication for internal services
-- JWT tokens for user authentication
-- IP whitelisting for restricted access
+**Security Features**:
+- IAM authentication for all endpoints via API Gateway
+- Cognito Identity Pool for browser-based credential management
+- Rate limiting and usage tracking via API Gateway
+- CORS restrictions to frontend domains only
+- Secure credential management through AWS STS
 
 ```yaml
 components:
   securitySchemes:
-    # No authentication currently required
-    # Future versions may support:
-    # - API Key authentication
-    # - AWS IAM authentication
-    # - JWT token authentication
+    iamAuth:
+      type: http
+      scheme: aws4-hmac-sha256
+      description: AWS IAM authentication using Signature Version 4
+      required: true
 ```
 
 ## Endpoints

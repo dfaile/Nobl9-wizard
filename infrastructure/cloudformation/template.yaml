@@ -178,7 +178,7 @@ Resources:
     Properties:
       Name: !Sub '/${ProjectName}/client-id'
       Description: Nobl9 API Client ID
-      Type: SecureString
+      Type: String
       Value: !Ref Nobl9ClientId
       KeyId: !Ref Nobl9CredentialsKey
 
@@ -187,7 +187,7 @@ Resources:
     Properties:
       Name: !Sub '/${ProjectName}/client-secret'
       Description: Nobl9 API Client Secret
-      Type: SecureString
+      Type: String
       Value: !Ref Nobl9ClientSecret
       KeyId: !Ref Nobl9CredentialsKey
 
@@ -317,6 +317,27 @@ Resources:
       ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
       PathPart: api
 
+  # API Gateway Resource for /health
+  HealthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: health
+
+  # API Gateway Method for GET /health
+  HealthGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref HealthResource
+      HttpMethod: GET
+      AuthorizationType: AWS_IAM
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Nobl9WizardFunction.Arn}/invocations'
+
   # API Gateway Resource for /api/create-project
   CreateProjectResource:
     Type: AWS::ApiGateway::Resource
@@ -332,7 +353,7 @@ Resources:
       RestApiId: !Ref ApiGatewayRestApi
       ResourceId: !Ref CreateProjectResource
       HttpMethod: POST
-      AuthorizationType: NONE
+      AuthorizationType: AWS_IAM
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
@@ -355,13 +376,107 @@ Resources:
             ResponseParameters:
               method.response.header.Access-Control-Allow-Origin: "'*'"
               method.response.header.Access-Control-Allow-Methods: "'POST, OPTIONS'"
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
       MethodResponses:
         - StatusCode: '200'
           ResponseParameters:
             method.response.header.Access-Control-Allow-Origin: true
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Headers: true
+
+  # Cognito Identity Pool for frontend authentication
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub '${ProjectName}-identity-pool'
+      AllowUnauthenticatedIdentities: true
+      CognitoIdentityProviders: []
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # IAM Role for unauthenticated users (frontend)
+  CognitoUnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-cognito-unauthenticated-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref CognitoIdentityPool
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': unauthenticated
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-api-access-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: execute-api:Invoke
+                Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # IAM Role for authenticated users (if needed later)
+  CognitoAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-cognito-authenticated-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref CognitoIdentityPool
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': authenticated
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-api-access-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: execute-api:Invoke
+                Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # Cognito Identity Pool Role Attachment
+  CognitoIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles:
+        unauthenticated: !GetAtt CognitoUnauthenticatedRole.Arn
+        authenticated: !GetAtt CognitoAuthenticatedRole.Arn
 
   # Lambda permission for API Gateway
   LambdaPermission:
@@ -376,6 +491,7 @@ Resources:
   ApiGatewayDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
+      - HealthGetMethod
       - CreateProjectPostMethod
       - CreateProjectOptionsMethod
     Properties:
@@ -485,6 +601,18 @@ Outputs:
     Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/api'
     Export:
       Name: !Sub '${AWS::StackName}-ApiGatewayUrl'
+
+  CognitoIdentityPoolId:
+    Description: Cognito Identity Pool ID for frontend authentication
+    Value: !Ref CognitoIdentityPool
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoIdentityPoolId'
+
+  CognitoUnauthenticatedRoleArn:
+    Description: ARN of the Cognito unauthenticated role
+    Value: !GetAtt CognitoUnauthenticatedRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoUnauthenticatedRoleArn'
 
   ApiGatewayCreateProjectUrl:
     Description: URL of the create-project API endpoint

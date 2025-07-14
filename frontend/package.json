@@ -4,6 +4,11 @@
   "private": true,
   "homepage": ".",
   "dependencies": {
+    "@aws-sdk/client-cognito-identity": "^3.0.0",
+    "@aws-sdk/credential-providers": "^3.0.0",
+    "@aws-sdk/signature-v4": "^3.0.0",
+    "@aws-sdk/protocol-http": "^3.0.0",
+    "@aws-crypto/sha256-browser": "^5.0.0",
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",

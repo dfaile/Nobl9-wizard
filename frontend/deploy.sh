@@ -16,6 +16,8 @@ NC='\033[0m' # No Color
 PROJECT_NAME="nobl9-wizard"
 ENVIRONMENT=${1:-prod}
 API_ENDPOINT=${2:-""}
+COGNITO_IDENTITY_POOL_ID=${3:-""}
+AWS_REGION=${4:-""}
 
 echo -e "${BLUE}🚀 Nobl9 Wizard Frontend Deployment${NC}"
 echo -e "${YELLOW}Environment: ${ENVIRONMENT}${NC}"
@@ -29,7 +31,19 @@ fi
 # Check if API endpoint is provided
 if [[ -z "$API_ENDPOINT" ]]; then
     echo -e "${YELLOW}Warning: No API endpoint provided. Using default from config.${NC}"
-    echo -e "${YELLOW}To set API endpoint: ./deploy.sh ${ENVIRONMENT} https://your-api-gateway-url.execute-api.region.amazonaws.com/prod${NC}"
+    echo -e "${YELLOW}To set API endpoint: ./deploy.sh ${ENVIRONMENT} https://your-api-gateway-url.execute-api.region.amazonaws.com/prod [COGNITO_IDENTITY_POOL_ID] [AWS_REGION]${NC}"
+fi
+
+# Check if Cognito Identity Pool ID is provided
+if [[ -z "$COGNITO_IDENTITY_POOL_ID" ]]; then
+    echo -e "${YELLOW}Warning: No Cognito Identity Pool ID provided. Using default from config.${NC}"
+    echo -e "${YELLOW}To set Cognito Identity Pool ID: ./deploy.sh ${ENVIRONMENT} [API_ENDPOINT] your-identity-pool-id [AWS_REGION]${NC}"
+fi
+
+# Check if AWS Region is provided
+if [[ -z "$AWS_REGION" ]]; then
+    echo -e "${YELLOW}Warning: No AWS Region provided. Using default from config.${NC}"
+    echo -e "${YELLOW}To set AWS Region: ./deploy.sh ${ENVIRONMENT} [API_ENDPOINT] [COGNITO_IDENTITY_POOL_ID] us-east-1${NC}"
 fi
 
 # Check prerequisites
@@ -98,6 +112,22 @@ if [[ -n "$API_ENDPOINT" ]]; then
     echo -e "${GREEN}✅ API endpoint set to: ${API_ENDPOINT}${NC}"
 else
     echo -e "${YELLOW}⚠️  Using default API endpoint from config${NC}"
+fi
+
+# Add Cognito Identity Pool ID if provided
+if [[ -n "$COGNITO_IDENTITY_POOL_ID" ]]; then
+    echo "REACT_APP_COGNITO_IDENTITY_POOL_ID=${COGNITO_IDENTITY_POOL_ID}" >> .env
+    echo -e "${GREEN}✅ Cognito Identity Pool ID set${NC}"
+else
+    echo -e "${YELLOW}⚠️  Using default Cognito Identity Pool ID from config${NC}"
+fi
+
+# Add AWS Region if provided
+if [[ -n "$AWS_REGION" ]]; then
+    echo "REACT_APP_AWS_REGION=${AWS_REGION}" >> .env
+    echo -e "${GREEN}✅ AWS Region set to: ${AWS_REGION}${NC}"
+else
+    echo -e "${YELLOW}⚠️  Using default AWS Region from config${NC}"
 fi
 
 # Build the application

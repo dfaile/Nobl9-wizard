@@ -539,7 +539,7 @@ func respondLambdaWithStatus(statusCode int, success bool, message string) (even
 			"Content-Type":                 "application/json",
 			"Access-Control-Allow-Origin":  "*",
 			"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-			"Access-Control-Allow-Headers": "Content-Type",
+			"Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
 		},
 	}, nil
 }
@@ -559,7 +559,7 @@ func handleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (
 			Headers: map[string]string{
 				"Access-Control-Allow-Origin":  "*",
 				"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-				"Access-Control-Allow-Headers": "Content-Type",
+				"Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
 			},
 		}, nil
 	}

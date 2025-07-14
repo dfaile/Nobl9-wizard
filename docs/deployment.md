@@ -290,8 +290,8 @@ npm run build
 # Deploy to S3 (use bucket name from infrastructure outputs)
 aws s3 sync build/ s3://nobl9-wizard-frontend --delete
 
-# Or use the deployment script
-./deploy.sh
+# Or use the deployment script with Cognito Identity Pool
+./deploy.sh prod https://your-api-gateway-url.execute-api.region.amazonaws.com/prod $COGNITO_IDENTITY_POOL_ID us-east-1
 ```
 
 ### 4. Configure Environment Variables
@@ -307,21 +307,44 @@ aws lambda update-function-configuration \
   }'
 ```
 
+### 5. Get Cognito Identity Pool ID for Frontend
+
+After deploying the infrastructure, you need to retrieve the Cognito Identity Pool ID for frontend authentication:
+
+```bash
+# Get the Cognito Identity Pool ID from CloudFormation outputs
+COGNITO_IDENTITY_POOL_ID=$(aws cloudformation describe-stacks \
+  --stack-name nobl9-wizard \
+  --query 'Stacks[0].Outputs[?OutputKey==`CognitoIdentityPoolId`].OutputValue' \
+  --output text)
+
+echo "Cognito Identity Pool ID: $COGNITO_IDENTITY_POOL_ID"
+```
+
+**Important**: Save this Cognito Identity Pool ID. It will be needed for frontend deployment.
+
 ## Post-Deployment Configuration
 
 ### 1. Update Frontend Configuration
 
-Update the API endpoint in the frontend configuration:
+The frontend configuration is automatically updated during deployment, but you can verify the settings:
 
 ```bash
 # Edit the config file
 nano frontend/src/config.ts
 ```
 
-Ensure the API Gateway URL is correct:
+Ensure the API Gateway URL and Cognito Identity Pool ID are correct:
 ```typescript
-export const API_BASE_URL = 'https://your-api-gateway-url.execute-api.region.amazonaws.com/prod';
+export const config = {
+  apiEndpoint: 'https://your-api-gateway-url.execute-api.region.amazonaws.com/prod',
+  cognitoIdentityPoolId: 'your-identity-pool-id',
+  awsRegion: 'us-east-1',
+  // ... other settings
+};
 ```
+
+**Note**: The Cognito Identity Pool ID and AWS Region are automatically injected during deployment using the `./deploy.sh` script.
 
 ### 2. Configure Custom Domain (Optional)
 
@@ -361,8 +384,13 @@ aws cloudwatch put-metric-alarm \
 ### 1. Test API Endpoints
 
 ```bash
-# Test health check endpoint
-curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health
+# Test health check endpoint (requires IAM authentication)
+# Note: This requires AWS credentials to sign the request
+aws sigv4-sign-request \
+  --region us-east-1 \
+  --service execute-api \
+  --method GET \
+  --uri https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health
 
 # Expected response:
 # {"status":"healthy","version":"1.0.0","timestamp":"2024-01-01T00:00:00Z"}
@@ -371,7 +399,7 @@ curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/h
 curl -X OPTIONS https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
   -H "Origin: https://your-frontend-bucket.s3-website-region.amazonaws.com" \
   -H "Access-Control-Request-Method: POST" \
-  -H "Access-Control-Request-Headers: Content-Type"
+  -H "Access-Control-Request-Headers: Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token"
 ```
 
 ### 2. Test Frontend
@@ -390,10 +418,14 @@ open https://your-frontend-bucket.s3-website-region.amazonaws.com
 ### 3. Test Nobl9 Integration
 
 ```bash
-# Test with real Nobl9 credentials
-curl -X POST https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
-  -H "Content-Type: application/json" \
-  -d '{
+# Test with real Nobl9 credentials (requires IAM authentication)
+# Note: This requires AWS credentials to sign the request
+aws sigv4-sign-request \
+  --region us-east-1 \
+  --service execute-api \
+  --method POST \
+  --uri https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
+  --body '{
     "appID": "test-project-deployment",
     "description": "Test project created during deployment",
     "userGroups": [
