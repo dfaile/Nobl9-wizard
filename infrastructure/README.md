@@ -7,12 +7,13 @@ This directory contains Infrastructure as Code (IaC) templates for deploying the
 The infrastructure creates a complete serverless environment for the Nobl9 onboarding application:
 
 - **Lambda Function**: Go-based API backend with secure credential management
-- **API Gateway**: RESTful API with CORS support for frontend integration
+- **API Gateway**: RESTful API with AWS_IAM authorization and CORS support
+- **Cognito Identity Pool**: Browser-based IAM credentials for frontend authentication
 - **S3 Buckets**: Frontend hosting and Lambda code storage
 - **KMS**: Encryption for sensitive credentials
 - **Parameter Store**: Secure storage for Nobl9 API credentials
 - **CloudWatch**: Monitoring, logging, and alerting
-- **IAM**: Least-privilege access policies
+- **IAM**: Least-privilege access policies for Lambda and frontend
 
 ## Architecture
 
@@ -20,6 +21,8 @@ The infrastructure creates a complete serverless environment for the Nobl9 onboa
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Frontend      │    │   API Gateway   │    │   Lambda        │
 │   (S3 Website)  │◄──►│   (REST API)    │◄──►│   Function      │
+│   + Cognito     │    │   + AWS_IAM     │    │   + KMS         │
+│   Identity Pool │    │   Auth          │    │   + Parameter   │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                                        │
                                                        ▼
@@ -237,7 +240,8 @@ aws cloudformation validate-template --template-body file://template.yaml
 | CloudWatch | Basic monitoring | ~$0.50 |
 | KMS | 1 key | ~$1.00 |
 | Parameter Store | 2 parameters | ~$0.05 |
-| **Total** | | **~$5.28/month** |
+| Cognito | Identity Pool usage | ~$0.50 |
+| **Total** | | **~$5.78/month** |
 
 *Costs are estimates and may vary based on actual usage.*
 
@@ -277,9 +281,10 @@ aws lambda invoke --function-name nobl9-wizard-api response.json
 
 **API Gateway Issues:**
 ```bash
-# Test API endpoint
+# Test API endpoint (requires IAM authentication)
 curl -X POST https://your-api-gateway-url/api/create-project \
   -H "Content-Type: application/json" \
+  -H "Authorization: AWS4-HMAC-SHA256 Credential=..." \
   -d '{"appID":"test","userGroups":[{"userIds":"test@example.com","role":"project-owner"}]}'
 ```
 

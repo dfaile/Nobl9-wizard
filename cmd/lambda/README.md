@@ -9,6 +9,7 @@ The Lambda function provides a serverless backend for the Nobl9 onboarding appli
 ## Features
 
 - **Serverless Architecture**: Runs on AWS Lambda with automatic scaling
+- **AWS IAM Authentication**: API Gateway methods require valid AWS IAM credentials
 - **Secure Credential Management**: Uses AWS KMS and Parameter Store for Nobl9 API credentials
 - **CORS Support**: Handles cross-origin requests from the S3-hosted frontend
 - **Error Handling**: Comprehensive error handling and logging
@@ -145,11 +146,29 @@ The Lambda execution role requires the following permissions:
 
 ## API Endpoints
 
-The Lambda function handles the following API Gateway endpoints:
+The Lambda function handles the following API Gateway endpoints with AWS IAM authentication:
+
+### GET /health
+
+Health check endpoint for monitoring.
+
+**Response:**
+```json
+{
+    "status": "healthy",
+    "timestamp": "2024-01-01T00:00:00Z"
+}
+```
 
 ### POST /api/create-project
 
 Creates a new Nobl9 project and assigns user roles.
+
+**Headers:**
+```
+Content-Type: application/json
+Authorization: AWS4-HMAC-SHA256 Credential=...
+```
 
 **Request Body:**
 ```json
@@ -271,11 +290,13 @@ aws lambda update-function-configuration \
 
 ## Security Considerations
 
-- All credentials are encrypted at rest using AWS KMS
-- Parameters are retrieved securely from Parameter Store
-- CORS headers are properly configured for frontend integration
-- Input validation prevents injection attacks
-- TLS verification can be disabled for testing environments
+- **AWS IAM Authentication**: All API requests require valid AWS IAM credentials
+- **API Gateway Authorization**: Methods configured with AWS_IAM authorization
+- **CORS Headers**: Properly configured for frontend integration with authentication
+- **Credential Encryption**: All credentials are encrypted at rest using AWS KMS
+- **Parameter Store**: Parameters are retrieved securely from AWS Systems Manager
+- **Input Validation**: Prevents injection attacks and validates all inputs
+- **TLS Verification**: Can be disabled for testing environments if needed
 
 ## Performance
 

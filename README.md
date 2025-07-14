@@ -10,7 +10,8 @@ This application converts the existing Nobl9 onboarding tool from a Docker-based
 
 - **Backend**: Go Lambda function using `provided.al2023` runtime
 - **Frontend**: React application hosted on S3 with static website hosting
-- **API**: AWS API Gateway with CORS support
+- **API**: AWS API Gateway with AWS_IAM authorization
+- **Authentication**: AWS Cognito Identity Pool for browser-based IAM credentials
 - **Security**: AWS KMS for encrypted credential management
 - **Monitoring**: CloudWatch for logging, metrics, and alarms
 - **Infrastructure**: Terraform and CloudFormation templates for deployment
@@ -23,12 +24,14 @@ This application converts the existing Nobl9 onboarding tool from a Docker-based
 - **High Availability**: Built on AWS managed services with 99.9%+ uptime
 - **Event-Driven**: Pay only for actual usage with no idle costs
 
-### 🔐 Secure Credential Management
+### 🔐 Secure Authentication & Credential Management
+- **AWS Cognito Identity Pool**: Browser-based IAM credentials for secure API access
+- **AWS_IAM Authorization**: API Gateway methods require valid AWS signatures
 - **AWS KMS Integration**: Nobl9 API credentials encrypted at rest and in transit
 - **Parameter Store**: Secure storage of encrypted credentials in AWS Systems Manager
 - **Runtime Decryption**: Credentials decrypted only when needed by Lambda function
 - **Credential Rotation**: Support for secure credential updates without code changes
-- **IAM Least Privilege**: Lambda function has minimal required permissions
+- **IAM Least Privilege**: Lambda function and frontend have minimal required permissions
 
 ### 💰 Cost Optimization
 - **Pay-Per-Use Pricing**: Only pay for actual Lambda invocations and API requests
@@ -77,6 +80,7 @@ Your AWS account needs the following permissions:
 - **S3**: Create buckets and manage objects
 - **KMS**: Create and manage encryption keys
 - **IAM**: Create roles and policies
+- **Cognito**: Create and manage Identity Pools
 - **CloudWatch**: Create log groups, metrics, and alarms
 - **Systems Manager Parameter Store**: Store and retrieve parameters
 
@@ -151,7 +155,7 @@ terraform plan
 # Deploy the infrastructure
 terraform apply
 
-# Note the outputs for API Gateway URL and S3 website URL
+# Note the outputs for API Gateway URL, S3 website URL, and Cognito Identity Pool ID
 terraform output
 ```
 
@@ -192,11 +196,12 @@ aws lambda update-function-code --function-name nobl9-onboarding-lambda --zip-fi
 cd frontend
 npm run build
 
-# Deploy to S3 (bucket name from infrastructure outputs)
-aws s3 sync build/ s3://your-frontend-bucket-name --delete
-
-# Or use the provided deployment script
+# Deploy to S3 using the provided deployment script
+# You'll need the Cognito Identity Pool ID and AWS region from infrastructure outputs
 ./deploy.sh
+
+# Or manually deploy to S3 (bucket name from infrastructure outputs)
+aws s3 sync build/ s3://your-frontend-bucket-name --delete
 ```
 
 ### 8. Verify Deployment
@@ -238,6 +243,8 @@ aws cloudwatch put-metric-alarm \
 
 ### API Usage
 
+The API requires AWS IAM authentication using AWS Signature Version 4 (SigV4). The frontend automatically handles authentication using AWS Cognito Identity Pool credentials.
+
 #### Create Project Endpoint
 
 **Endpoint:** `POST /api/create-project`
@@ -245,6 +252,7 @@ aws cloudwatch put-metric-alarm \
 **Headers:**
 ```
 Content-Type: application/json
+Authorization: AWS4-HMAC-SHA256 Credential=...
 ```
 
 **Request Body:**
@@ -288,10 +296,20 @@ Content-Type: application/json
 
 #### Example API Calls
 
-**Using curl:**
+**Using the frontend (recommended):**
+The React frontend automatically handles AWS IAM authentication and provides a user-friendly interface for project creation.
+
+**Using curl with AWS credentials:**
 ```bash
+# First, get temporary credentials from Cognito Identity Pool
+aws cognito-identity get-credentials-for-identity \
+  --identity-id YOUR_IDENTITY_ID \
+  --logins "cognito-identity.amazonaws.com=YOUR_IDENTITY_POOL_ID"
+
+# Then use the credentials to sign the request
 curl -X POST https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
   -H "Content-Type: application/json" \
+  -H "Authorization: AWS4-HMAC-SHA256 Credential=..." \
   -d '{
     "appID": "test-project",
     "description": "Test project created via API",
@@ -302,9 +320,29 @@ curl -X POST https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/
   }'
 ```
 
-**Using JavaScript:**
+**Using JavaScript with AWS SDK v3:**
 ```javascript
-const response = await fetch('https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project', {
+import { CognitoIdentityClient } from "@aws-sdk/client-cognito-identity";
+import { fromCognitoIdentityPool } from "@aws-sdk/credential-provider-cognito-identity";
+import { SignatureV4 } from "@aws-sdk/signature-v4";
+import { Sha256 } from "@aws-crypto/sha256-js";
+
+const identityPoolId = 'your-identity-pool-id';
+const region = 'us-east-1';
+
+const credentials = fromCognitoIdentityPool({
+  client: new CognitoIdentityClient({ region }),
+  identityPoolId: identityPoolId,
+});
+
+const signer = new SignatureV4({
+  credentials,
+  region,
+  service: 'execute-api',
+  sha256: Sha256,
+});
+
+const request = {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -316,8 +354,10 @@ const response = await fetch('https://your-api-gateway-url.execute-api.region.am
       { userIds: 'user@example.com', role: 'project-owner' }
     ]
   })
-});
+};
 
+const signedRequest = await signer.sign(request);
+const response = await fetch('https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project', signedRequest);
 const result = await response.json();
 console.log(result.message);
 ```
@@ -326,20 +366,54 @@ console.log(result.message);
 
 #### Python Integration
 ```python
+import boto3
 import requests
 import json
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+from botocore.credentials import Credentials
 
-def create_nobl9_project(api_url, project_name, description, users):
+def create_nobl9_project(api_url, project_name, description, users, identity_pool_id, region):
+    # Get credentials from Cognito Identity Pool
+    cognito_identity = boto3.client('cognito-identity', region_name=region)
+    
+    # Get identity ID (for unauthenticated access)
+    identity_response = cognito_identity.get_id(IdentityPoolId=identity_pool_id)
+    identity_id = identity_response['IdentityId']
+    
+    # Get credentials for the identity
+    credentials_response = cognito_identity.get_credentials_for_identity(IdentityId=identity_id)
+    credentials = credentials_response['Credentials']
+    
+    # Create AWS credentials object
+    aws_credentials = Credentials(
+        access_key=credentials['AccessKeyId'],
+        secret_key=credentials['SecretKey'],
+        token=credentials['SessionToken']
+    )
+    
+    # Prepare the request
     payload = {
         "appID": project_name,
         "description": description,
         "userGroups": users
     }
     
+    # Sign the request
+    request = AWSRequest(
+        method='POST',
+        url=f"{api_url}/api/create-project",
+        data=json.dumps(payload),
+        headers={'Content-Type': 'application/json'}
+    )
+    
+    SigV4Auth(aws_credentials, 'execute-api', region).add_auth(request)
+    
+    # Make the request
     response = requests.post(
         f"{api_url}/api/create-project",
-        headers={"Content-Type": "application/json"},
-        json=payload
+        headers=dict(request.headers),
+        data=json.dumps(payload)
     )
     
     return response.json()
@@ -354,7 +428,9 @@ result = create_nobl9_project(
     "https://your-api-gateway-url.execute-api.region.amazonaws.com/prod",
     "new-project",
     "Project created via Python integration",
-    users
+    users,
+    "your-identity-pool-id",
+    "us-east-1"
 )
 print(result)
 ```
@@ -373,9 +449,11 @@ output "api_url" {
 
 ## Security
 
+- **AWS IAM Authentication**: All API requests require valid AWS IAM credentials
+- **Cognito Identity Pool**: Browser-based IAM credentials for secure frontend access
 - **KMS Encryption**: All Nobl9 credentials are encrypted using AWS KMS
 - **Parameter Store**: Encrypted credentials stored in AWS Systems Manager Parameter Store
-- **IAM Least Privilege**: Lambda function has minimal required permissions
+- **IAM Least Privilege**: Lambda function and frontend have minimal required permissions
 - **CORS Configuration**: Properly configured for S3-to-API-Gateway communication
 
 ## Monitoring
@@ -393,7 +471,8 @@ Typical monthly costs for moderate usage:
 - S3: $0.50-1/month
 - CloudWatch: $1-2/month
 - KMS: $1/month
-- **Total: ~$5-12/month**
+- Cognito: $0.50-1/month
+- **Total: ~$5-13/month**
 
 ## Development
 
@@ -499,6 +578,7 @@ Both templates create identical AWS resources including Lambda, API Gateway, S3,
 **Frontend Deployment Issues:**
 - **S3 Bucket Not Found**: Verify bucket name and region in deployment script
 - **CORS Errors**: Check API Gateway CORS configuration
+- **Authentication Errors**: Verify Cognito Identity Pool ID and region in config
 - **Build Failures**: Ensure Node.js 18+ and all dependencies are installed
 
 **Infrastructure Deployment:**
@@ -515,7 +595,9 @@ aws logs tail /aws/lambda/nobl9-onboarding-lambda --follow
 
 **Test API Endpoint:**
 ```bash
-curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health
+# Test health endpoint (requires IAM authentication)
+curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health \
+  -H "Authorization: AWS4-HMAC-SHA256 Credential=..."
 ```
 
 **Verify S3 Website:**
