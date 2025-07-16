@@ -391,13 +391,10 @@ Resources:
       IdentityPoolName: !Sub '${ProjectName}-identity-pool'
       AllowUnauthenticatedIdentities: true
       CognitoIdentityProviders: []
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Owner
-          Value: !Ref Owner
+      IdentityPoolTags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+        Owner: !Ref Owner
 
   # IAM Role for unauthenticated users (frontend)
   CognitoUnauthenticatedRole:
