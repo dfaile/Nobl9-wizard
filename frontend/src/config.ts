@@ -59,8 +59,13 @@ export const api = {
   // Helper function to make signed API calls
   async call(endpoint: string, options: RequestInit = {}): Promise<Response> {
     try {
-      // Prepare the HTTP request
+      // Validate endpoint URL
       const url = new URL(endpoint);
+      if (!url.protocol.startsWith('https')) {
+        throw new Error('Only HTTPS endpoints are allowed for security');
+      }
+      
+      // Prepare the HTTP request
       const request = new HttpRequest({
         method: options.method || 'GET',
         protocol: url.protocol,
@@ -68,7 +73,8 @@ export const api = {
         path: url.pathname + url.search,
         headers: {
           'Content-Type': 'application/json',
-          ...options.headers,
+          'X-Requested-With': 'XMLHttpRequest', // CSRF protection
+          ...(options.headers as Record<string, string>),
         },
         body: options.body,
       });
@@ -81,10 +87,19 @@ export const api = {
         method: signedRequest.method,
         headers: signedRequest.headers,
         body: signedRequest.body,
+        // Add timeout and security options
+        signal: AbortSignal.timeout(30000), // 30 second timeout
       };
 
       // Make the request
-      return fetch(endpoint, fetchOptions);
+      const response = await fetch(endpoint, fetchOptions);
+      
+      // Check for security-related response headers
+      if (!response.headers.get('X-Content-Type-Options')?.includes('nosniff')) {
+        console.warn('Missing X-Content-Type-Options header in response');
+      }
+      
+      return response;
     } catch (error) {
       console.error('Error making signed API request:', error);
       throw error;

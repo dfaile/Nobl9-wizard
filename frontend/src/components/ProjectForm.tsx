@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import './ProjectForm.css';
 import { config, api } from '../config';
+import { 
+  sanitizeProjectName, 
+  sanitizeDescription, 
+  sanitizeUserId, 
+  sanitizeHtml 
+} from '../utils/security';
 
 // Valid Nobl9 project roles
 const ROLE_OPTIONS = [
@@ -54,14 +60,13 @@ const ProjectForm: React.FC = () => {
     }
   };
 
-  // Validation
+  // Validation with sanitization
   const validate = (): string | null => {
-    if (!appID.trim()) return 'Project name is required.';
-    if (!/^[a-z0-9-]+$/.test(appID)) {
-      return 'Project name can only contain lowercase letters, numbers, and hyphens.';
+    // Sanitize and validate project name
+    const sanitizedAppID = sanitizeProjectName(appID);
+    if (!sanitizedAppID) {
+      return 'Project name is required and must contain only lowercase letters, numbers, and hyphens (3-63 characters).';
     }
-    if (appID.length < 3) return 'Project name must be at least 3 characters long.';
-    if (appID.length > 63) return 'Project name must be less than 63 characters.';
     
     if (totalUsers === 0) return 'At least one user must be specified.';
     if (totalUsers > config.maxUsersPerProject) {
@@ -72,16 +77,12 @@ const ProjectForm: React.FC = () => {
       if (!group.userIds.trim()) return 'User IDs cannot be empty.';
       if (!group.role) return 'Role must be selected for each group.';
       
-      // Validate email format for each user
+      // Validate and sanitize each user ID
       const userIds = group.userIds.split(',').map(id => id.trim()).filter(Boolean);
       for (const userId of userIds) {
-        if (userId.includes('@')) {
-          const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-          if (!emailRegex.test(userId)) {
-            return `Invalid email format: ${userId}`;
-          }
-        } else if (userId.length < 2) {
-          return `User ID too short: ${userId}`;
+        const sanitizedUserId = sanitizeUserId(userId);
+        if (!sanitizedUserId) {
+          return `Invalid user ID format: ${sanitizeHtml(userId)}`;
         }
       }
     }
@@ -109,13 +110,24 @@ const ProjectForm: React.FC = () => {
     setMessage('');
     
     try {
+      // Sanitize all data before sending to API
+      const sanitizedData = {
+        appID: sanitizeProjectName(appID)!,
+        description: sanitizeDescription(description),
+        userGroups: userGroups.map(group => ({
+          userIds: group.userIds
+            .split(',')
+            .map(id => id.trim())
+            .filter(Boolean)
+            .map(id => sanitizeUserId(id)!)
+            .join(', '),
+          role: group.role
+        }))
+      };
+      
       const response = await api.call(api.createProject, {
         method: 'POST',
-        body: JSON.stringify({ 
-          appID, 
-          description, 
-          userGroups 
-        }),
+        body: JSON.stringify(sanitizedData),
       });
       
       const data: ApiResponse = await response.json();
@@ -269,13 +281,13 @@ const ProjectForm: React.FC = () => {
             
             <div className="summary-section">
               <span className="summary-label">Project Name:</span>
-              <span className="summary-value">{appID}</span>
+              <span className="summary-value">{sanitizeHtml(appID)}</span>
             </div>
             
             <div className="summary-section">
               <span className="summary-label">Description:</span>
               <span className="summary-value">
-                {description || <em>No description provided</em>}
+                {description ? sanitizeHtml(description) : <em>No description provided</em>}
               </span>
             </div>
             
@@ -284,9 +296,9 @@ const ProjectForm: React.FC = () => {
               <ul className="summary-users">
                 {userGroups.map((group, idx) => (
                   <li key={idx} className="summary-user-item">
-                    <span className="summary-user-list">{group.userIds}</span>
+                    <span className="summary-user-list">{sanitizeHtml(group.userIds)}</span>
                     <span className="summary-role">
-                      Role: {ROLE_OPTIONS.find(r => r.value === group.role)?.label || group.role}
+                      Role: {ROLE_OPTIONS.find(r => r.value === group.role)?.label || sanitizeHtml(group.role)}
                     </span>
                   </li>
                 ))}
