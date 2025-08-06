@@ -352,6 +352,11 @@ func handleCreateProject(ctx context.Context, request events.APIGatewayProxyRequ
 	// Set environment variables for the Nobl9 SDK
 	os.Setenv("NOBL9_SDK_CLIENT_ID", credentials.ClientID)
 	os.Setenv("NOBL9_SDK_CLIENT_SECRET", credentials.ClientSecret)
+	
+	// Fix for Lambda: Set HOME to /tmp to avoid "HOME is not defined" error
+	// The Nobl9 SDK tries to access the HOME directory for config/cache files
+	// but in Lambda, $HOME points to a non-existent read-only directory
+	os.Setenv("HOME", "/tmp")
 
 	// Create a context with timeout for all SDK operations
 	sdkCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
