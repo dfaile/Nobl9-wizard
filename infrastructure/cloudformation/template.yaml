@@ -63,6 +63,18 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true', 'false']
     Description: Enable CloudWatch alarms for monitoring
+  
+  LambdaBucketVersioning:
+    Type: String
+    Default: 'Enabled'
+    AllowedValues: ['Enabled', 'Disabled']
+    Description: Enable versioning for Lambda S3 bucket
+  
+  FrontendBucketVersioning:
+    Type: String
+    Default: 'Disabled'
+    AllowedValues: ['Enabled', 'Disabled']
+    Description: Enable versioning for frontend S3 bucket
 
 Conditions:
   EnableDashboard: !Equals [!Ref EnableCloudWatchDashboard, 'true']
@@ -75,7 +87,7 @@ Resources:
     Properties:
       BucketName: !Sub '${ProjectName}-lambda-${AWS::AccountId}-${AWS::Region}'
       VersioningConfiguration:
-        Status: Enabled
+        Status: !Ref LambdaBucketVersioning
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -94,6 +106,8 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${ProjectName}-frontend-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration:
+        Status: !Ref FrontendBucketVersioning
       WebsiteConfiguration:
         IndexDocument: index.html
         ErrorDocument: index.html
@@ -178,7 +192,7 @@ Resources:
     Properties:
       Name: !Sub '/${ProjectName}/client-id'
       Description: Nobl9 API Client ID
-      Type: String
+      Type: SecureString
       Value: !Ref Nobl9ClientId
       KeyId: !Ref Nobl9CredentialsKey
 
@@ -187,7 +201,7 @@ Resources:
     Properties:
       Name: !Sub '/${ProjectName}/client-secret'
       Description: Nobl9 API Client Secret
-      Type: String
+      Type: SecureString
       Value: !Ref Nobl9ClientSecret
       KeyId: !Ref Nobl9CredentialsKey
 
