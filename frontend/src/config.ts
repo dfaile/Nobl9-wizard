@@ -35,6 +35,37 @@ export const config = {
   }
 };
 
+// Type guard to check if headers is a plain object (not an array, not Headers)
+function isPlainHeaderObject(headers: unknown): headers is Record<string, string> {
+  return (
+    typeof headers === 'object' &&
+    headers !== null &&
+    !Array.isArray(headers) &&
+    !(headers instanceof Headers)
+  );
+}
+
+// Helper function to normalize headers
+function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
+  if (!headers) {
+    return {};
+  }
+
+  if (isPlainHeaderObject(headers)) {
+    return headers;
+  }
+
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers);
+  }
+
+  if (headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+
+  return {};
+}
+
 // AWS SDK configuration
 const credentials = fromCognitoIdentityPool({
   clientConfig: { region: config.awsRegion },
@@ -74,7 +105,7 @@ export const api = {
         headers: {
           'Content-Type': 'application/json',
           'X-Requested-With': 'XMLHttpRequest', // CSRF protection
-          ...(options.headers as Record<string, string>),
+          ...normalizeHeaders(options.headers),
         },
         body: options.body,
       });
