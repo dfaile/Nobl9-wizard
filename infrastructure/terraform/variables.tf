@@ -119,6 +119,18 @@ variable "lambda_bucket_versioning" {
   default     = true
 }
 
+variable "lambda_bucket_force_destroy" {
+  description = "Force destroy Lambda S3 bucket even if it contains objects"
+  type        = bool
+  default     = true
+}
+
+variable "frontend_bucket_force_destroy" {
+  description = "Force destroy frontend S3 bucket even if it contains objects"
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Additional tags to apply to all resources"
   type        = map(string)

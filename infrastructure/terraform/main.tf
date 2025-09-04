@@ -48,7 +48,7 @@ resource "random_pet" "frontend_bucket_name" {
 # S3 Bucket for Lambda function code
 resource "aws_s3_bucket" "lambda_bucket" {
   bucket = random_pet.lambda_bucket_name.id
-  force_destroy = true
+  force_destroy = var.lambda_bucket_force_destroy
 }
 
 resource "aws_s3_bucket_acl" "lambda_bucket_acl" {
@@ -59,19 +59,26 @@ resource "aws_s3_bucket_acl" "lambda_bucket_acl" {
 resource "aws_s3_bucket_versioning" "lambda_bucket_versioning" {
   bucket = aws_s3_bucket.lambda_bucket.id
   versioning_configuration {
-    status = "Enabled"
+    status = var.lambda_bucket_versioning ? "Enabled" : "Disabled"
   }
 }
 
 # S3 Bucket for frontend hosting
 resource "aws_s3_bucket" "frontend_bucket" {
   bucket = random_pet.frontend_bucket_name.id
-  force_destroy = true
+  force_destroy = var.frontend_bucket_force_destroy
 }
 
 resource "aws_s3_bucket_acl" "frontend_bucket_acl" {
   bucket = aws_s3_bucket.frontend_bucket.id
   acl    = "public-read"
+}
+
+resource "aws_s3_bucket_versioning" "frontend_bucket_versioning" {
+  bucket = aws_s3_bucket.frontend_bucket.id
+  versioning_configuration {
+    status = var.frontend_bucket_versioning ? "Enabled" : "Disabled"
+  }
 }
 
 resource "aws_s3_bucket_website_configuration" "frontend_bucket_website" {
