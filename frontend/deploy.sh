@@ -42,7 +42,7 @@ fi
 
 # Check if AWS Region is provided
 if [[ -z "$AWS_REGION" ]]; then
-    echo -e "${YELLOW}Warning: No AWS Region provided. Using default from config.${NC}"
+    echo -e "${YELLOW}Warning: No AWS Region provided. Will use AWS CLI configured region.${NC}"
     echo -e "${YELLOW}To set AWS Region: ./deploy.sh ${ENVIRONMENT} [API_ENDPOINT] [COGNITO_IDENTITY_POOL_ID] us-east-1${NC}"
 fi
 
@@ -72,9 +72,24 @@ fi
 
 echo -e "${GREEN}✅ Prerequisites check passed${NC}"
 
-# Get AWS account and region info
+# Get AWS account info
 AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-AWS_REGION=$(aws configure get region)
+
+# Use command line region if provided, otherwise get from AWS CLI config
+if [[ -z "$AWS_REGION" ]]; then
+    AWS_REGION=$(aws configure get region)
+    echo -e "${YELLOW}Using AWS CLI configured region: ${AWS_REGION}${NC}"
+else
+    echo -e "${GREEN}Using command line specified region: ${AWS_REGION}${NC}"
+fi
+
+# Validate AWS region format
+if [[ ! "$AWS_REGION" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]]; then
+    echo -e "${RED}Error: Invalid AWS region format: ${AWS_REGION}${NC}"
+    echo -e "${YELLOW}Expected format: us-east-1, eu-west-1, ap-southeast-1, etc.${NC}"
+    exit 1
+fi
+
 S3_BUCKET="${PROJECT_NAME}-frontend-${AWS_ACCOUNT}-${AWS_REGION}"
 
 echo -e "${BLUE}📍 AWS Account: ${AWS_ACCOUNT}${NC}"
