@@ -32,8 +32,10 @@ Thumbs.db
 *.so
 *.dylib
 *.test
-/go.sum
-/go.mod
+cmd/lambda/go.sum
+cmd/lambda/go.mod
+cmd/lambda/main
+cmd/lambda/lambda.zip
 
 # Cursor
 .cursor/
