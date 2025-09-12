@@ -1,20 +1,11 @@
 // Frontend configuration for Nobl9 Wizard
 // This file contains configuration settings for the application
 
-import { fromCognitoIdentityPool } from "@aws-sdk/credential-providers";
-import { SignatureV4 } from "@aws-sdk/signature-v4";
-import { HttpRequest } from "@aws-sdk/protocol-http";
-import { Sha256 } from "@aws-crypto/sha256-browser";
+import { getOrCreateCsrfToken } from "./utils/security";
 
 export const config = {
   // API Gateway endpoint - will be replaced during deployment
   apiEndpoint: process.env.REACT_APP_API_ENDPOINT || 'https://your-api-gateway-url.execute-api.region.amazonaws.com/prod',
-  
-  // Cognito Identity Pool ID for IAM authentication
-  cognitoIdentityPoolId: process.env.REACT_APP_COGNITO_IDENTITY_POOL_ID || 'your-identity-pool-id',
-  
-  // AWS Region
-  awsRegion: process.env.REACT_APP_AWS_REGION || 'us-east-1',
   
   // Help documentation URL
   helpUrl: process.env.REACT_APP_HELP_URL || 'https://docs.nobl9.com',
@@ -66,20 +57,7 @@ function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
   return {};
 }
 
-// AWS SDK configuration
-const credentials = fromCognitoIdentityPool({
-  clientConfig: { region: config.awsRegion },
-  identityPoolId: config.cognitoIdentityPoolId,
-});
-
-const signer = new SignatureV4({
-  credentials,
-  region: config.awsRegion,
-  service: "execute-api",
-  sha256: Sha256,
-});
-
-// API helper functions with IAM authentication
+// API helper functions with CSRF protection
 export const api = {
   // Create project endpoint
   createProject: `${config.apiEndpoint}/api/create-project`,
@@ -87,7 +65,7 @@ export const api = {
   // Health check endpoint
   healthCheck: `${config.apiEndpoint}/health`,
   
-  // Helper function to make signed API calls
+  // Helper function to make API calls with CSRF protection
   async call(endpoint: string, options: RequestInit = {}): Promise<Response> {
     try {
       // Validate endpoint URL
@@ -96,28 +74,23 @@ export const api = {
         throw new Error('Only HTTPS endpoints are allowed for security');
       }
       
-      // Prepare the HTTP request
-      const request = new HttpRequest({
-        method: options.method || 'GET',
-        protocol: url.protocol,
-        hostname: url.hostname,
-        path: url.pathname + url.search,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest', // CSRF protection
-          ...normalizeHeaders(options.headers),
-        },
-        body: options.body,
-      });
+      // Get CSRF token for state-changing requests
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...normalizeHeaders(options.headers),
+      };
 
-      // Sign the request
-      const signedRequest = await signer.sign(request);
+      // Add CSRF token for POST, PUT, PATCH, DELETE requests
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes((options.method || 'GET').toUpperCase())) {
+        headers['X-CSRF-Token'] = getOrCreateCsrfToken();
+      }
 
-      // Convert signed request to fetch options
+      // Prepare fetch options
       const fetchOptions: RequestInit = {
-        method: signedRequest.method,
-        headers: signedRequest.headers,
-        body: signedRequest.body,
+        method: options.method || 'GET',
+        headers,
+        body: options.body,
         // Add timeout and security options
         signal: AbortSignal.timeout(30000), // 30 second timeout
       };
@@ -132,7 +105,7 @@ export const api = {
       
       return response;
     } catch (error) {
-      console.error('Error making signed API request:', error);
+      console.error('Error making API request:', error);
       throw error;
     }
   },

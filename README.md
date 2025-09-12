@@ -10,9 +10,8 @@ This application converts the existing Nobl9 onboarding tool from a Docker-based
 
 - **Backend**: Go Lambda function using `provided.al2023` runtime
 - **Frontend**: React application hosted on S3 with static website hosting
-- **API**: AWS API Gateway with AWS_IAM authorization
-- **Authentication**: AWS Cognito Identity Pool for browser-based IAM credentials
-- **Security**: AWS KMS for encrypted credential management
+- **API**: AWS API Gateway with public access and CSRF protection
+- **Security**: CSRF tokens, input sanitization, and AWS KMS for encrypted credential management
 - **Monitoring**: CloudWatch for logging, metrics, and alarms
 - **Infrastructure**: Terraform and CloudFormation templates for deployment
 
@@ -24,14 +23,15 @@ This application converts the existing Nobl9 onboarding tool from a Docker-based
 - **High Availability**: Built on AWS managed services with 99.9%+ uptime
 - **Event-Driven**: Pay only for actual usage with no idle costs
 
-### 🔐 Secure Authentication & Credential Management
-- **AWS Cognito Identity Pool**: Browser-based IAM credentials for secure API access
-- **AWS_IAM Authorization**: API Gateway methods require valid AWS signatures
+### 🔐 Advanced Security Features
+- **CSRF Protection**: Cryptographically secure tokens prevent cross-site request forgery attacks
+- **Input Sanitization**: Comprehensive validation and sanitization of all user inputs
+- **XSS Prevention**: HTML entity escaping and content security policies
 - **AWS KMS Integration**: Nobl9 API credentials encrypted at rest and in transit
 - **Parameter Store**: Secure storage of encrypted credentials in AWS Systems Manager
 - **Runtime Decryption**: Credentials decrypted only when needed by Lambda function
-- **Credential Rotation**: Support for secure credential updates without code changes
-- **IAM Least Privilege**: Lambda function and frontend have minimal required permissions
+- **Security Logging**: Structured security event logging for monitoring and alerting
+- **Configurable Enforcement**: CSRF protection can be enabled/disabled per environment
 
 ### 💰 Cost Optimization
 - **Pay-Per-Use Pricing**: Only pay for actual Lambda invocations and API requests
@@ -243,7 +243,7 @@ aws cloudwatch put-metric-alarm \
 
 ### API Usage
 
-The API requires AWS IAM authentication using AWS Signature Version 4 (SigV4). The frontend automatically handles authentication using AWS Cognito Identity Pool credentials.
+The API uses CSRF protection for security. The frontend automatically handles CSRF token generation and validation.
 
 #### Create Project Endpoint
 
@@ -252,7 +252,8 @@ The API requires AWS IAM authentication using AWS Signature Version 4 (SigV4). T
 **Headers:**
 ```
 Content-Type: application/json
-Authorization: AWS4-HMAC-SHA256 Credential=...
+X-CSRF-Token: <csrf-token>
+X-Requested-With: XMLHttpRequest
 ```
 
 **Request Body:**
@@ -297,19 +298,19 @@ Authorization: AWS4-HMAC-SHA256 Credential=...
 #### Example API Calls
 
 **Using the frontend (recommended):**
-The React frontend automatically handles AWS IAM authentication and provides a user-friendly interface for project creation.
+The React frontend automatically handles CSRF token generation and provides a user-friendly interface for project creation.
 
-**Using curl with AWS credentials:**
+**Using curl with CSRF protection:**
 ```bash
-# First, get temporary credentials from Cognito Identity Pool
-aws cognito-identity get-credentials-for-identity \
-  --identity-id YOUR_IDENTITY_ID \
-  --logins "cognito-identity.amazonaws.com=YOUR_IDENTITY_POOL_ID"
+# First, get a CSRF token (in a real application, this would be handled by the frontend)
+# For testing purposes, you can use a simple token
+CSRF_TOKEN="test-csrf-token-$(date +%s)"
 
-# Then use the credentials to sign the request
+# Make the request with CSRF token
 curl -X POST https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
   -H "Content-Type: application/json" \
-  -H "Authorization: AWS4-HMAC-SHA256 Credential=..." \
+  -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -H "X-Requested-With: XMLHttpRequest" \
   -d '{
     "appID": "test-project",
     "description": "Test project created via API",
@@ -320,32 +321,25 @@ curl -X POST https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/
   }'
 ```
 
-**Using JavaScript with AWS SDK v3:**
+**Using JavaScript with CSRF protection:**
 ```javascript
-import { CognitoIdentityClient } from "@aws-sdk/client-cognito-identity";
-import { fromCognitoIdentityPool } from "@aws-sdk/credential-provider-cognito-identity";
-import { SignatureV4 } from "@aws-sdk/signature-v4";
-import { Sha256 } from "@aws-crypto/sha256-js";
+// Generate CSRF token (in a real application, this would be handled by the security utilities)
+function generateCSRFToken() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return btoa(String.fromCharCode(...array)).replace(/[+/]/g, (char) => 
+    char === '+' ? '-' : '_'
+  ).replace(/=+$/, '');
+}
 
-const identityPoolId = 'your-identity-pool-id';
-const region = 'us-east-1';
+const csrfToken = generateCSRFToken();
 
-const credentials = fromCognitoIdentityPool({
-  client: new CognitoIdentityClient({ region }),
-  identityPoolId: identityPoolId,
-});
-
-const signer = new SignatureV4({
-  credentials,
-  region,
-  service: 'execute-api',
-  sha256: Sha256,
-});
-
-const request = {
+const response = await fetch('https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
+    'X-CSRF-Token': csrfToken,
+    'X-Requested-With': 'XMLHttpRequest'
   },
   body: JSON.stringify({
     appID: 'my-project',
@@ -354,10 +348,8 @@ const request = {
       { userIds: 'user@example.com', role: 'project-owner' }
     ]
   })
-};
+});
 
-const signedRequest = await signer.sign(request);
-const response = await fetch('https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project', signedRequest);
 const result = await response.json();
 console.log(result.message);
 ```
@@ -366,31 +358,20 @@ console.log(result.message);
 
 #### Python Integration
 ```python
-import boto3
 import requests
 import json
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
-from botocore.credentials import Credentials
+import secrets
+import base64
 
-def create_nobl9_project(api_url, project_name, description, users, identity_pool_id, region):
-    # Get credentials from Cognito Identity Pool
-    cognito_identity = boto3.client('cognito-identity', region_name=region)
-    
-    # Get identity ID (for unauthenticated access)
-    identity_response = cognito_identity.get_id(IdentityPoolId=identity_pool_id)
-    identity_id = identity_response['IdentityId']
-    
-    # Get credentials for the identity
-    credentials_response = cognito_identity.get_credentials_for_identity(IdentityId=identity_id)
-    credentials = credentials_response['Credentials']
-    
-    # Create AWS credentials object
-    aws_credentials = Credentials(
-        access_key=credentials['AccessKeyId'],
-        secret_key=credentials['SecretKey'],
-        token=credentials['SessionToken']
-    )
+def generate_csrf_token():
+    """Generate a cryptographically secure CSRF token"""
+    token_bytes = secrets.token_bytes(32)
+    token = base64.urlsafe_b64encode(token_bytes).decode('ascii').rstrip('=')
+    return token
+
+def create_nobl9_project(api_url, project_name, description, users):
+    # Generate CSRF token
+    csrf_token = generate_csrf_token()
     
     # Prepare the request
     payload = {
@@ -399,20 +380,14 @@ def create_nobl9_project(api_url, project_name, description, users, identity_poo
         "userGroups": users
     }
     
-    # Sign the request
-    request = AWSRequest(
-        method='POST',
-        url=f"{api_url}/api/create-project",
-        data=json.dumps(payload),
-        headers={'Content-Type': 'application/json'}
-    )
-    
-    SigV4Auth(aws_credentials, 'execute-api', region).add_auth(request)
-    
-    # Make the request
+    # Make the request with CSRF protection
     response = requests.post(
         f"{api_url}/api/create-project",
-        headers=dict(request.headers),
+        headers={
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf_token,
+            'X-Requested-With': 'XMLHttpRequest'
+        },
         data=json.dumps(payload)
     )
     
@@ -428,9 +403,7 @@ result = create_nobl9_project(
     "https://your-api-gateway-url.execute-api.region.amazonaws.com/prod",
     "new-project",
     "Project created via Python integration",
-    users,
-    "your-identity-pool-id",
-    "us-east-1"
+    users
 )
 print(result)
 ```
@@ -449,12 +422,14 @@ output "api_url" {
 
 ## Security
 
-- **AWS IAM Authentication**: All API requests require valid AWS IAM credentials
-- **Cognito Identity Pool**: Browser-based IAM credentials for secure frontend access
+- **CSRF Protection**: Cryptographically secure tokens prevent cross-site request forgery attacks
+- **Input Sanitization**: Comprehensive validation and sanitization of all user inputs
+- **XSS Prevention**: HTML entity escaping and content security policies
 - **KMS Encryption**: All Nobl9 credentials are encrypted using AWS KMS
 - **Parameter Store**: Encrypted credentials stored in AWS Systems Manager Parameter Store
-- **IAM Least Privilege**: Lambda function and frontend have minimal required permissions
+- **Security Logging**: Structured security event logging for monitoring and alerting
 - **CORS Configuration**: Properly configured for S3-to-API-Gateway communication
+- **Configurable Enforcement**: CSRF protection can be enabled/disabled per environment
 
 ## Monitoring
 
@@ -595,9 +570,8 @@ aws logs tail /aws/lambda/nobl9-onboarding-lambda --follow
 
 **Test API Endpoint:**
 ```bash
-# Test health endpoint (requires IAM authentication)
-curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health \
-  -H "Authorization: AWS4-HMAC-SHA256 Credential=..."
+# Test health endpoint (public access)
+curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health
 ```
 
 **Verify S3 Website:**

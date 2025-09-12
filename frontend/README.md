@@ -7,8 +7,8 @@ A modern React-based frontend for the Nobl9 Wizard application, designed to be h
 - **Modern React 18** with TypeScript
 - **Responsive Design** - Works on desktop, tablet, and mobile
 - **AWS S3 Hosting** - Optimized for static website hosting
-- **AWS IAM Authentication** - Secure API access using Cognito Identity Pool
-- **API Gateway Integration** - Seamless backend communication with SigV4 signing
+- **CSRF Protection** - Secure API access with cryptographically secure tokens
+- **API Gateway Integration** - Seamless backend communication with security headers
 - **Accessibility** - WCAG compliant with keyboard navigation
 - **Performance Optimized** - Fast loading with code splitting
 - **Environment Configuration** - Support for dev, staging, and production
@@ -19,6 +19,7 @@ A modern React-based frontend for the Nobl9 Wizard application, designed to be h
 - AWS CLI configured with appropriate permissions
 - S3 bucket with static website hosting enabled
 - API Gateway endpoint for backend communication
+- Modern browser with crypto.getRandomValues() support
 
 ## 🛠️ Development Setup
 
@@ -39,7 +40,6 @@ REACT_APP_API_ENDPOINT=https://your-api-gateway-url.execute-api.region.amazonaws
 
 # AWS Configuration
 REACT_APP_AWS_REGION=us-east-1
-REACT_APP_COGNITO_IDENTITY_POOL_ID=your-identity-pool-id
 
 # Application Settings
 REACT_APP_ENVIRONMENT=development
@@ -75,11 +75,11 @@ This creates an optimized production build in the `build/` directory.
 Use the provided deployment script:
 
 ```bash
-# Deploy to production (requires Cognito Identity Pool ID and AWS region)
+# Deploy to production (requires API Gateway URL and AWS region)
 ./deploy.sh
 
 # Or with custom parameters
-./deploy.sh your-identity-pool-id us-east-1 your-s3-bucket-name
+./deploy.sh your-api-gateway-url us-east-1 your-s3-bucket-name
 ```
 
 ### Manual Deployment
@@ -126,20 +126,19 @@ frontend/
 
 ### API Integration
 
-The frontend communicates with the backend through the `config.ts` file with automatic AWS IAM authentication:
+The frontend communicates with the backend through the `config.ts` file with automatic CSRF protection:
 
 ```typescript
 export const config = {
   apiEndpoint: process.env.REACT_APP_API_ENDPOINT || 'default-endpoint',
   awsRegion: process.env.REACT_APP_AWS_REGION || 'us-east-1',
-  cognitoIdentityPoolId: process.env.REACT_APP_COGNITO_IDENTITY_POOL_ID || '',
   // ... other config
 };
 
 export const api = {
   createProject: `${config.apiEndpoint}/api/create-project`,
   healthCheck: `${config.apiEndpoint}/health`,
-  // ... API helper functions with automatic SigV4 signing
+  // ... API helper functions with automatic CSRF token generation
 };
 ```
 
@@ -148,8 +147,7 @@ export const api = {
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `REACT_APP_API_ENDPOINT` | API Gateway endpoint | `default-endpoint` |
-| `REACT_APP_AWS_REGION` | AWS region for Cognito and API | `us-east-1` |
-| `REACT_APP_COGNITO_IDENTITY_POOL_ID` | Cognito Identity Pool ID for IAM auth | `` |
+| `REACT_APP_AWS_REGION` | AWS region for API | `us-east-1` |
 | `REACT_APP_ENVIRONMENT` | Environment name | `development` |
 | `REACT_APP_VERSION` | Application version | `1.0.0` |
 | `REACT_APP_DEBUG_MODE` | Enable debug features | `false` |
@@ -198,12 +196,13 @@ npm test -- --watch
 
 ## 🔒 Security
 
-- **AWS IAM Authentication** - All API requests require valid AWS credentials
-- **Cognito Identity Pool** - Browser-based IAM credentials for secure access
-- **SigV4 Signing** - Automatic request signing for API Gateway
+- **CSRF Protection** - Cryptographically secure tokens prevent cross-site request forgery
+- **Input Sanitization** - Comprehensive validation and sanitization of all user inputs
+- **XSS Prevention** - HTML entity escaping and content security policies
 - **CORS Configuration** - Properly configured for API Gateway
 - **Content Security Policy** - Configured in index.html
 - **HTTPS Only** - Enforced in production
+- **Security Headers** - X-Requested-With and CSRF token validation
 - **Input Validation** - Client-side validation with server-side verification
 
 ## 📊 Performance
@@ -226,7 +225,8 @@ npm test -- --watch
    - Verify API Gateway endpoint is correct
    - Check CORS configuration on backend
    - Ensure API Gateway is deployed and accessible
-   - Verify Cognito Identity Pool ID is configured correctly
+   - Verify CSRF token generation is working
+   - Check that security headers are being sent
    - Check AWS region configuration matches your deployment
 
 3. **S3 Deployment Issues**
@@ -238,6 +238,13 @@ npm test -- --watch
    - Verify API Gateway CORS settings
    - Check that the frontend domain is allowed
    - Ensure proper headers are returned
+   - Verify X-CSRF-Token and X-Requested-With headers are allowed
+
+5. **CSRF Token Issues**
+   - Check browser console for crypto.getRandomValues() errors
+   - Verify CSRF token generation in security utilities
+   - Ensure tokens are being sent in request headers
+   - Check backend CSRF validation logs
 
 ### Debug Mode
 
@@ -246,6 +253,8 @@ Enable debug mode by setting `REACT_APP_DEBUG_MODE=true` in your `.env` file. Th
 - API endpoint information
 - Environment details
 - Version information
+- CSRF token generation details
+- Security header information
 - Additional logging
 
 ## 🤝 Contributing

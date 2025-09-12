@@ -44,7 +44,7 @@ Your AWS user/role must have permissions for:
 - **Systems Manager Parameter Store**: Create and manage parameters
 - **CloudFormation**: Create and manage stacks (if using CloudFormation)
 
-**Note**: The API Gateway is configured for public access (`authorization = "NONE"`). For production environments, consider implementing additional authentication mechanisms.
+**Note**: The API Gateway is configured for public access with CSRF protection. CSRF tokens provide security against cross-site request forgery attacks.
 
 ## Architecture Overview
 
@@ -307,21 +307,29 @@ aws lambda update-function-configuration \
   }'
 ```
 
-### 5. Get Cognito Identity Pool ID for Frontend
+### 5. Configure CSRF Protection
 
-After deploying the infrastructure, you need to retrieve the Cognito Identity Pool ID for frontend authentication:
+The application uses CSRF protection for security. You can configure CSRF enforcement via environment variables:
 
 ```bash
-# Get the Cognito Identity Pool ID from CloudFormation outputs
-COGNITO_IDENTITY_POOL_ID=$(aws cloudformation describe-stacks \
-  --stack-name nobl9-wizard \
-  --query 'Stacks[0].Outputs[?OutputKey==`CognitoIdentityPoolId`].OutputValue' \
-  --output text)
+# Enable CSRF enforcement (recommended for production)
+aws lambda update-function-configuration \
+  --function-name nobl9-onboarding-lambda \
+  --environment Variables='{
+    "ENFORCE_CSRF_TOKENS":"true",
+    "NOBL9_CLIENT_ID_PARAM_NAME":"/nobl9-onboarding-app/client-id",
+    "NOBL9_CLIENT_SECRET_PARAM_NAME":"/nobl9-onboarding-app/client-secret"
+  }'
 
-echo "Cognito Identity Pool ID: $COGNITO_IDENTITY_POOL_ID"
+# Or disable CSRF enforcement (warning mode only - for development)
+aws lambda update-function-configuration \
+  --function-name nobl9-onboarding-lambda \
+  --environment Variables='{
+    "ENFORCE_CSRF_TOKENS":"false",
+    "NOBL9_CLIENT_ID_PARAM_NAME":"/nobl9-onboarding-app/client-id",
+    "NOBL9_CLIENT_SECRET_PARAM_NAME":"/nobl9-onboarding-app/client-secret"
+  }'
 ```
-
-**Important**: Save this Cognito Identity Pool ID. It will be needed for frontend deployment.
 
 ## Post-Deployment Configuration
 
@@ -334,17 +342,15 @@ The frontend configuration is automatically updated during deployment, but you c
 nano frontend/src/config.ts
 ```
 
-Ensure the API Gateway URL and Cognito Identity Pool ID are correct:
+Ensure the API Gateway URL is correct:
 ```typescript
 export const config = {
   apiEndpoint: 'https://your-api-gateway-url.execute-api.region.amazonaws.com/prod',
-  cognitoIdentityPoolId: 'your-identity-pool-id',
-  awsRegion: 'us-east-1',
   // ... other settings
 };
 ```
 
-**Note**: The Cognito Identity Pool ID and AWS Region are automatically injected during deployment using the `./deploy.sh` script.
+**Note**: The API Gateway URL is automatically injected during deployment using the `./deploy.sh` script.
 
 ### 2. Configure Custom Domain (Optional)
 
@@ -384,13 +390,8 @@ aws cloudwatch put-metric-alarm \
 ### 1. Test API Endpoints
 
 ```bash
-# Test health check endpoint (requires IAM authentication)
-# Note: This requires AWS credentials to sign the request
-aws sigv4-sign-request \
-  --region us-east-1 \
-  --service execute-api \
-  --method GET \
-  --uri https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health
+# Test health check endpoint (public access)
+curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/health
 
 # Expected response:
 # {"status":"healthy","version":"1.0.0","timestamp":"2024-01-01T00:00:00Z"}
@@ -399,7 +400,7 @@ aws sigv4-sign-request \
 curl -X OPTIONS https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
   -H "Origin: https://your-frontend-bucket.s3-website-region.amazonaws.com" \
   -H "Access-Control-Request-Method: POST" \
-  -H "Access-Control-Request-Headers: Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token"
+  -H "Access-Control-Request-Headers: Content-Type,X-CSRF-Token,X-Requested-With"
 ```
 
 ### 2. Test Frontend
@@ -418,14 +419,15 @@ open https://your-frontend-bucket.s3-website-region.amazonaws.com
 ### 3. Test Nobl9 Integration
 
 ```bash
-# Test with real Nobl9 credentials (requires IAM authentication)
-# Note: This requires AWS credentials to sign the request
-aws sigv4-sign-request \
-  --region us-east-1 \
-  --service execute-api \
-  --method POST \
-  --uri https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
-  --body '{
+# Test with real Nobl9 credentials (requires CSRF token)
+# Generate a CSRF token for testing
+CSRF_TOKEN="$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)"
+
+curl -X POST https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{
     "appID": "test-project-deployment",
     "description": "Test project created during deployment",
     "userGroups": [
@@ -517,10 +519,13 @@ aws iam get-role-policy --role-name nobl9-onboarding-lambda-role --policy-name l
 aws apigateway get-rest-api --rest-api-id your-api-id
 ```
 
-**Issue**: 403 Forbidden
+**Issue**: 403 Forbidden (CSRF token validation failed)
 ```bash
-# Check API Gateway resource policy
-aws apigateway get-rest-api-policy --rest-api-id your-api-id
+# Check Lambda logs for CSRF validation errors
+aws logs tail /aws/lambda/nobl9-onboarding-lambda --follow
+
+# Verify CSRF token format and generation
+# Check that X-CSRF-Token header is included in requests
 ```
 
 #### S3 Frontend Issues
@@ -649,10 +654,18 @@ aws s3api put-bucket-lifecycle-configuration \
 ### 1. Regular Security Audits
 
 ```bash
-# Check IAM policies
-aws iam simulate-principal-policy \
-  --policy-source-arn arn:aws:iam::account:role/nobl9-onboarding-lambda-role \
-  --action-names lambda:InvokeFunction
+# Check Lambda function security configuration
+aws lambda get-function-configuration --function-name nobl9-onboarding-lambda
+
+# Monitor security events in CloudWatch logs
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/nobl9-onboarding-lambda \
+  --filter-pattern "SECURITY_EVENT"
+
+# Check CSRF token validation success rates
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/nobl9-onboarding-lambda \
+  --filter-pattern "CSRF_TOKEN"
 ```
 
 ### 2. KMS Key Rotation

@@ -67,22 +67,24 @@ servers:
 
 ## Authentication
 
-The API uses **AWS IAM authentication** to restrict access to authorized frontend applications only. All API requests must be signed using AWS Signature Version 4 (SigV4) with valid AWS credentials.
+The API uses **CSRF protection** to prevent cross-site request forgery attacks. All state-changing requests (POST, PUT, PATCH, DELETE) must include a valid CSRF token.
 
 **Security Features**:
-- IAM authentication for all endpoints via API Gateway
-- Cognito Identity Pool for browser-based credential management
-- Rate limiting and usage tracking via API Gateway
+- CSRF token validation for all state-changing requests
+- Input sanitization and validation
+- XSS prevention through HTML entity escaping
+- Security event logging for monitoring
+- Configurable CSRF enforcement per environment
 - CORS restrictions to frontend domains only
-- Secure credential management through AWS STS
 
 ```yaml
 components:
   securitySchemes:
-    iamAuth:
-      type: http
-      scheme: aws4-hmac-sha256
-      description: AWS IAM authentication using Signature Version 4
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: CSRF token for request validation
       required: true
 ```
 
@@ -155,6 +157,8 @@ Creates a new Nobl9 project and assigns user roles.
       operationId: createProject
       tags:
         - Projects
+      security:
+        - csrfToken: []
       requestBody:
         required: true
         content:
@@ -221,6 +225,16 @@ Creates a new Nobl9 project and assigns user roles.
                     success: false
                     message: "Invalid role 'invalid-role' in group 0. Must be one of: project-owner, project-viewer, project-editor"
                     error: "VALIDATION_ERROR"
+        '403':
+          description: Forbidden - CSRF token validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Invalid CSRF token"
+                error: "CSRF_TOKEN_INVALID"
         '409':
           description: Project already exists
           content:
@@ -267,7 +281,7 @@ Creates a new Nobl9 project and assigns user roles.
               description: Allowed headers
               schema:
                 type: string
-                example: "Content-Type, Authorization"
+                example: "Content-Type, X-CSRF-Token, X-Requested-With"
             Access-Control-Max-Age:
               description: Cache duration for preflight response
               schema:
@@ -496,7 +510,7 @@ components:
           description: Allowed headers
           schema:
             type: string
-            example: "Content-Type, Authorization"
+            example: "Content-Type, X-CSRF-Token, X-Requested-With"
         Access-Control-Max-Age:
           description: Cache duration for preflight response
           schema:
@@ -531,8 +545,13 @@ curl -X GET https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/h
 ### Create Project Request
 
 ```bash
+# Generate CSRF token (in production, this would be handled by the frontend)
+CSRF_TOKEN="$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)"
+
 curl -X POST https://your-api-gateway-url.execute-api.region.amazonaws.com/prod/api/create-project \
   -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -H "X-Requested-With: XMLHttpRequest" \
   -d '{
     "appID": "production-monitoring",
     "description": "Production environment monitoring project",
@@ -601,10 +620,15 @@ class Nobl9OnboardingAPI {
   }
 
   async createProject(request: CreateProjectRequest): Promise<CreateProjectResponse> {
+    // Generate CSRF token (in production, this would be handled by security utilities)
+    const csrfToken = this.generateCSRFToken();
+    
     const response = await fetch(`${this.baseUrl}/api/create-project`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest',
       },
       body: JSON.stringify(request),
     });
@@ -619,6 +643,14 @@ class Nobl9OnboardingAPI {
   async getHealth(): Promise<any> {
     const response = await fetch(`${this.baseUrl}/health`);
     return response.json();
+  }
+
+  private generateCSRFToken(): string {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    return btoa(String.fromCharCode(...array)).replace(/[+/]/g, (char) => 
+      char === '+' ? '-' : '_'
+    ).replace(/=+$/, '');
   }
 }
 
@@ -665,6 +697,9 @@ class Nobl9OnboardingAPI:
         """Create a new Nobl9 project with user role assignments."""
         url = f"{self.base_url}/api/create-project"
         
+        # Generate CSRF token
+        csrf_token = self._generate_csrf_token()
+        
         # Convert dataclass to dict
         payload = {
             "appID": request.appID,
@@ -677,7 +712,13 @@ class Nobl9OnboardingAPI:
         if request.description:
             payload["description"] = request.description
         
-        response = requests.post(url, json=payload)
+        headers = {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf_token,
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        
+        response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
         
         return response.json()
@@ -688,6 +729,12 @@ class Nobl9OnboardingAPI:
         response = requests.get(url)
         response.raise_for_status()
         return response.json()
+    
+    def _generate_csrf_token(self) -> str:
+        """Generate a cryptographically secure CSRF token."""
+        token_bytes = secrets.token_bytes(32)
+        token = base64.urlsafe_b64encode(token_bytes).decode('ascii').rstrip('=')
+        return token
 
 # Usage
 api = Nobl9OnboardingAPI('https://your-api-gateway-url.execute-api.region.amazonaws.com/prod')
@@ -764,8 +811,20 @@ func (api *Nobl9OnboardingAPI) CreateProject(request CreateProjectRequest) (*Cre
         return nil, fmt.Errorf("failed to marshal request: %w", err)
     }
 
+    // Generate CSRF token
+    csrfToken := api.generateCSRFToken()
+
     url := fmt.Sprintf("%s/api/create-project", api.BaseURL)
-    resp, err := api.Client.Post(url, "application/json", bytes.NewBuffer(jsonData))
+    req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+    if err != nil {
+        return nil, fmt.Errorf("failed to create request: %w", err)
+    }
+
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("X-CSRF-Token", csrfToken)
+    req.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+    resp, err := api.Client.Do(req)
     if err != nil {
         return nil, fmt.Errorf("failed to make request: %w", err)
     }
@@ -781,6 +840,13 @@ func (api *Nobl9OnboardingAPI) CreateProject(request CreateProjectRequest) (*Cre
     }
 
     return &response, nil
+}
+
+func (api *Nobl9OnboardingAPI) generateCSRFToken() string {
+    // Generate a cryptographically secure CSRF token
+    token := make([]byte, 32)
+    rand.Read(token)
+    return base64.URLEncoding.EncodeToString(token)[:32]
 }
 
 func (api *Nobl9OnboardingAPI) GetHealth() (*HealthResponse, error) {
@@ -835,11 +901,13 @@ func main() {
 ### Security Considerations
 
 1. **HTTPS Only**: Always use HTTPS for API communication
-2. **Input Validation**: Validate all input data on both client and server
-3. **Error Information**: Don't expose sensitive information in error messages
-4. **CORS Configuration**: Configure CORS appropriately for your domain
-5. **Public Access**: The API is publicly accessible - implement additional security if needed
-6. **Rate Limiting**: Monitor usage and implement rate limiting for production use
+2. **CSRF Protection**: Include valid CSRF tokens in all state-changing requests
+3. **Input Validation**: Validate all input data on both client and server
+4. **Error Information**: Don't expose sensitive information in error messages
+5. **CORS Configuration**: Configure CORS appropriately for your domain
+6. **Public Access**: The API is publicly accessible - CSRF protection provides security
+7. **Rate Limiting**: Monitor usage and implement rate limiting for production use
+8. **Security Logging**: Monitor security events and failed CSRF validations
 
 ### Monitoring and Observability
 

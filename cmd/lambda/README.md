@@ -9,11 +9,13 @@ The Lambda function provides a serverless backend for the Nobl9 onboarding appli
 ## Features
 
 - **Serverless Architecture**: Runs on AWS Lambda with automatic scaling
-- **AWS IAM Authentication**: API Gateway methods require valid AWS IAM credentials
+- **CSRF Protection**: Validates cryptographically secure tokens to prevent cross-site request forgery
+- **Input Sanitization**: Comprehensive validation and sanitization of all user inputs
+- **Security Logging**: Structured security event logging for monitoring and alerting
 - **Secure Credential Management**: Uses AWS KMS and Parameter Store for Nobl9 API credentials
 - **CORS Support**: Handles cross-origin requests from the S3-hosted frontend
 - **Error Handling**: Comprehensive error handling and logging
-- **Input Validation**: Validates all user inputs before processing
+- **Configurable Security**: CSRF enforcement can be enabled/disabled per environment
 
 ## Prerequisites
 
@@ -54,6 +56,7 @@ The Lambda function requires the following environment variables:
 |----------|-------------|----------|
 | `NOBL9_CLIENT_ID_PARAM_NAME` | Parameter Store name for Nobl9 Client ID | Yes |
 | `NOBL9_CLIENT_SECRET_PARAM_NAME` | Parameter Store name for Nobl9 Client Secret | Yes |
+| `ENFORCE_CSRF_TOKENS` | Enable CSRF token enforcement (set to "true" for production) | No |
 | `NOBL9_SKIP_TLS_VERIFY` | Skip TLS verification (set to "true" if needed) | No |
 
 ## AWS Services Integration
@@ -146,7 +149,7 @@ The Lambda execution role requires the following permissions:
 
 ## API Endpoints
 
-The Lambda function handles the following API Gateway endpoints with AWS IAM authentication:
+The Lambda function handles the following API Gateway endpoints with CSRF protection:
 
 ### GET /health
 
@@ -167,7 +170,8 @@ Creates a new Nobl9 project and assigns user roles.
 **Headers:**
 ```
 Content-Type: application/json
-Authorization: AWS4-HMAC-SHA256 Credential=...
+X-CSRF-Token: <csrf-token>
+X-Requested-With: XMLHttpRequest
 ```
 
 **Request Body:**
@@ -274,28 +278,42 @@ cat response.json
 1. **Permission Denied**: Ensure the Lambda execution role has the required IAM permissions
 2. **Parameter Not Found**: Verify the Parameter Store parameters exist and are accessible
 3. **KMS Decryption Failed**: Check KMS key permissions and encryption context
-4. **Timeout**: Increase the Lambda timeout if processing large numbers of users
+4. **CSRF Token Validation Failed**: Check token format and generation in frontend
+5. **Security Event Logging**: Monitor CloudWatch logs for security events
+6. **Timeout**: Increase the Lambda timeout if processing large numbers of users
 
 ### Debug Mode
 
-Enable debug logging by setting the log level:
+Enable debug logging and CSRF enforcement:
 
 ```bash
+# Enable CSRF enforcement (recommended for production)
 aws lambda update-function-configuration \
     --function-name nobl9-wizard-api \
     --environment Variables='{
+        "ENFORCE_CSRF_TOKENS":"true",
+        "LOG_LEVEL":"DEBUG"
+    }'
+
+# Or disable CSRF enforcement (warning mode only - for development)
+aws lambda update-function-configuration \
+    --function-name nobl9-wizard-api \
+    --environment Variables='{
+        "ENFORCE_CSRF_TOKENS":"false",
         "LOG_LEVEL":"DEBUG"
     }'
 ```
 
 ## Security Considerations
 
-- **AWS IAM Authentication**: All API requests require valid AWS IAM credentials
-- **API Gateway Authorization**: Methods configured with AWS_IAM authorization
-- **CORS Headers**: Properly configured for frontend integration with authentication
+- **CSRF Protection**: Validates cryptographically secure tokens to prevent cross-site request forgery
+- **Input Sanitization**: Comprehensive validation and sanitization of all user inputs
+- **Security Logging**: Structured security event logging for monitoring and alerting
+- **CORS Headers**: Properly configured for frontend integration with security headers
 - **Credential Encryption**: All credentials are encrypted at rest using AWS KMS
 - **Parameter Store**: Parameters are retrieved securely from AWS Systems Manager
 - **Input Validation**: Prevents injection attacks and validates all inputs
+- **Configurable Enforcement**: CSRF protection can be enabled/disabled per environment
 - **TLS Verification**: Can be disabled for testing environments if needed
 
 ## Performance

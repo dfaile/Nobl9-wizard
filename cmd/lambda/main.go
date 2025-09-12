@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -67,9 +68,10 @@ type Nobl9Credentials struct {
 
 // Global variables for AWS services
 var (
-	kmsClient  *kms.Client
-	ssmClient  *ssm.Client
-	appVersion = "1.0.0"
+	kmsClient    *kms.Client
+	ssmClient    *ssm.Client
+	appVersion   = "1.0.0"
+	csrfEnforced = false // Set to true to enforce CSRF tokens (currently optional)
 )
 
 // ptr creates a pointer to a string - helper function needed for role binding specs
@@ -159,6 +161,81 @@ func getValidRoles() string {
 		roles = append(roles, role)
 	}
 	return strings.Join(roles, ", ")
+}
+
+// validateCSRFToken validates the format and characteristics of a CSRF token
+// This implements the same validation logic as the frontend for consistency
+func validateCSRFToken(token string) bool {
+	if token == "" {
+		return false
+	}
+
+	// Check length (base64 encoded tokens should be 32+ characters)
+	if len(token) < 32 || len(token) > 128 {
+		return false
+	}
+
+	// Check for valid base64url characters (RFC 4648 Section 5)
+	base64UrlRegex := regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	if !base64UrlRegex.MatchString(token) {
+		return false
+	}
+
+	// Verify we can decode it as base64url (basic format check)
+	// Replace base64url chars with standard base64 chars for validation
+	standardB64 := strings.ReplaceAll(strings.ReplaceAll(token, "-", "+"), "_", "/")
+	// Add padding if needed
+	if len(standardB64)%4 != 0 {
+		standardB64 += strings.Repeat("=", 4-len(standardB64)%4)
+	}
+
+	if _, err := base64.StdEncoding.DecodeString(standardB64); err != nil {
+		return false
+	}
+
+	// Check entropy - token should have good character distribution
+	charCounts := make(map[rune]int)
+	for _, char := range token {
+		charCounts[char]++
+	}
+
+	// If any character appears more than 25% of the time, it's likely not random
+	maxOccurrence := 0
+	for _, count := range charCounts {
+		if count > maxOccurrence {
+			maxOccurrence = count
+		}
+	}
+
+	if float64(maxOccurrence) > float64(len(token))*0.25 {
+		return false
+	}
+
+	return true
+}
+
+// extractCSRFToken safely extracts the CSRF token from request headers
+func extractCSRFToken(request events.APIGatewayProxyRequest) string {
+	// Try different header case variations that API Gateway might send
+	headerVariations := []string{
+		"X-CSRF-Token",
+		"x-csrf-token",
+		"X-Csrf-Token",
+	}
+
+	for _, headerName := range headerVariations {
+		if token, exists := request.Headers[headerName]; exists && token != "" {
+			return token
+		}
+	}
+
+	return ""
+}
+
+// logSecurityEvent logs security-related events for monitoring and alerting
+func logSecurityEvent(level, event, sourceIP, details string) {
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	log.Printf("SECURITY_EVENT|%s|%s|%s|%s|%s", level, timestamp, event, sourceIP, details)
 }
 
 // configureTLS sets up custom HTTP transport with TLS verification disabled if needed
@@ -276,7 +353,7 @@ func handleHealthCheck(ctx context.Context, request events.APIGatewayProxyReques
 			"Content-Type":                 "application/json",
 			"Access-Control-Allow-Origin":  "*",
 			"Access-Control-Allow-Methods": "GET, OPTIONS",
-			"Access-Control-Allow-Headers": "Content-Type",
+			"Access-Control-Allow-Headers": "Content-Type,X-CSRF-Token,X-Requested-With",
 		},
 	}, nil
 }
@@ -289,6 +366,33 @@ func handleCreateProject(ctx context.Context, request events.APIGatewayProxyRequ
 	}
 
 	log.Printf("Processing create project request: %s", request.Body)
+
+	// Extract and validate CSRF token
+	sourceIP := request.RequestContext.Identity.SourceIP
+	csrfToken := extractCSRFToken(request)
+
+	// Validate X-Requested-With header for AJAX requests
+	requestedWith := request.Headers["X-Requested-With"]
+	if requestedWith != "XMLHttpRequest" {
+		logSecurityEvent("WARNING", "MISSING_X_REQUESTED_WITH", sourceIP, "Missing or invalid X-Requested-With header")
+		// Note: Not enforcing this strictly as it can break legitimate requests
+	}
+
+	if csrfToken != "" {
+		if !validateCSRFToken(csrfToken) {
+			logSecurityEvent("WARNING", "INVALID_CSRF_TOKEN", sourceIP, fmt.Sprintf("Invalid CSRF token format: %d chars", len(csrfToken)))
+			if csrfEnforced {
+				return respondLambdaWithStatus(http.StatusForbidden, false, "Invalid CSRF token")
+			}
+		} else {
+			logSecurityEvent("INFO", "VALID_CSRF_TOKEN", sourceIP, "CSRF token validation passed")
+		}
+	} else {
+		logSecurityEvent("WARNING", "MISSING_CSRF_TOKEN", sourceIP, "No CSRF token provided")
+		if csrfEnforced {
+			return respondLambdaWithStatus(http.StatusForbidden, false, "CSRF token required")
+		}
+	}
 
 	// Parse the JSON request body into our struct
 	var req CreateProjectRequest
@@ -352,7 +456,7 @@ func handleCreateProject(ctx context.Context, request events.APIGatewayProxyRequ
 	// Set environment variables for the Nobl9 SDK
 	os.Setenv("NOBL9_SDK_CLIENT_ID", credentials.ClientID)
 	os.Setenv("NOBL9_SDK_CLIENT_SECRET", credentials.ClientSecret)
-	
+
 	// Fix for Lambda: Set HOME to /tmp to avoid "HOME is not defined" error
 	// The Nobl9 SDK tries to access the HOME directory for config/cache files
 	// but in Lambda, $HOME points to a non-existent read-only directory
@@ -544,7 +648,7 @@ func respondLambdaWithStatus(statusCode int, success bool, message string) (even
 			"Content-Type":                 "application/json",
 			"Access-Control-Allow-Origin":  "*",
 			"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-			"Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+			"Access-Control-Allow-Headers": "Content-Type,X-CSRF-Token,X-Requested-With",
 		},
 	}, nil
 }
@@ -564,7 +668,7 @@ func handleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (
 			Headers: map[string]string{
 				"Access-Control-Allow-Origin":  "*",
 				"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-				"Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+				"Access-Control-Allow-Headers": "Content-Type,X-CSRF-Token,X-Requested-With",
 			},
 		}, nil
 	}
@@ -594,6 +698,14 @@ func init() {
 	// Initialize AWS service clients
 	kmsClient = kms.NewFromConfig(cfg)
 	ssmClient = ssm.NewFromConfig(cfg)
+
+	// Configure CSRF enforcement from environment variable
+	if os.Getenv("ENFORCE_CSRF_TOKENS") == "true" {
+		csrfEnforced = true
+		log.Println("CSRF token enforcement is ENABLED")
+	} else {
+		log.Println("CSRF token enforcement is DISABLED (warning mode only)")
+	}
 
 	log.Println("AWS clients initialized successfully")
 }
